@@ -1,0 +1,66 @@
+@startuml Aidx_Project_Architecture
+
+skinparam classAttributeIconSize 0
+
+package Models {
+    class UserModel {
+        +id: String
+        +name: String
+        +email: String
+    }
+
+    class AppointmentModel {
+        +id: String
+        +userId: String
+        +title: String
+    }
+
+    class HealthDataModel {
+        +id: String
+        +userId: String
+        +type: String
+        +value: double
+    }
+}
+
+package Services {
+    class AuthService {
+        +signIn()
+        +signOut()
+    }
+
+    class BluetoothService {
+        +scanDevices()
+        +connectToDevice()
+    }
+
+    class FirebaseService {
+        +saveUserData()
+        +fetchUserData()
+    }
+}
+
+package Screens {
+    class DashboardScreen {
+        +displayHealthMetrics()
+    }
+
+    class WearableScreen {
+        +connectToDevice()
+        +displayHealthData()
+    }
+
+    class SymptomScreen {
+        +recordSymptoms()
+        +analyzeSymptoms()
+    }
+}
+
+UserModel "1" -- "0..*" AppointmentModel
+UserModel "1" -- "0..*" HealthDataModel
+AuthService ..> FirebaseService
+BluetoothService ..> WearableScreen
+DashboardScreen ..> BluetoothService
+SymptomScreen ..> AuthService
+
+@enduml 

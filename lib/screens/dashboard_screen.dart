@@ -17,6 +17,7 @@ import 'dart:math' as math;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:aidx/screens/news_detail_screen.dart';
 import 'dart:ui';
+import '../screens/vitals_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -396,11 +397,18 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildVitalsCard() {
-    return ClipRRect(
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const VitalsScreen()),
+        );
+      },
+      child: ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: Stack(
         children: [
-          // Glassmorphism background
+            // Existing implementation remains the same
           BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
             child: Container(),
@@ -836,6 +844,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
         ],
+        ),
       ),
     );
   }

@@ -1,6 +1,7 @@
-# Aidx - Health Assistant App
+<<<<<<< HEAD
+# Medigay Flutter App
 
-This is a Flutter version of the Aidx health assistant app, a comprehensive health monitoring solution with wearable device integration.
+This is a Flutter version of the Medigay web application, a comprehensive health assistant app with wearable device integration.
 
 ## Features
 
@@ -55,8 +56,8 @@ lib/
 
 1. Clone the repository
 ```bash
-git clone https://github.com/Alvee0033/aidx.git
-cd aidx/flutter
+git clone https://github.com/yourusername/medigay.git
+cd medigay/flutter
 ```
 
 2. Install dependencies
@@ -91,4 +92,7 @@ The app uses Firebase for authentication and Firestore for data storage. Make su
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the LICENSE file for details. 
+=======
+# Aidx
+>>>>>>> 034bb0585e9e75cd83fad664749a87c29f3664c2

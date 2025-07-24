@@ -51,6 +51,7 @@ class AppConstants {
   static const String routeSymptomAI = "/symptom_ai";
   static const String routeNewsDetail = "/news_detail";
   static const String routeBloodDonation = "/blood-donation";
+  static const String routeVitals = '/vitals';
 
   // Telegram SOS
   // TODO: Replace with your actual bot token and chat ID

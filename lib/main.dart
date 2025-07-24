@@ -27,6 +27,7 @@ import 'package:aidx/screens/ai_symptom_screen.dart';
 import 'package:aidx/screens/blood_donation_screen.dart';
 import 'firebase_options.dart';
 import 'utils/permission_utils.dart';
+import 'package:aidx/screens/vitals_screen.dart';
 
 // Global RouteObserver for route aware widgets
 final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<void>>();
@@ -220,6 +221,7 @@ class MyApp extends StatelessWidget {
             AppConstants.routeReminder: (context) => const ReminderScreen(),
             AppConstants.routeTimeline: (context) => const TimelineScreen(),
             AppConstants.routeBloodDonation: (context) => const BloodDonationScreen(),
+            AppConstants.routeVitals: (context) => const VitalsScreen(),
           },
         ),
       ),
