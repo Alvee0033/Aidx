@@ -6,7 +6,10 @@ import '../services/firebase_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
-import 'private_chat_screen.dart';
+import 'package:geolocator/geolocator.dart';
+import 'dart:math' as math;
+import 'chat_thread_screen.dart';
+import 'inbox_screen.dart';
 
 class BloodDonationScreen extends StatefulWidget {
   const BloodDonationScreen({Key? key}) : super(key: key);
@@ -26,6 +29,8 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
   String _selectedBloodType = 'A+';
   String _selectedCity = 'Dhaka';
   double _radius = 10.0;
+  bool _useGpsRadius = false;
+  Position? _currentPosition;
   bool _isLoading = false;
   bool _showPostForm = false;
   List<Map<String, dynamic>> _donationRequests = [];
@@ -37,6 +42,8 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
   // Error states
   bool _hasError = false;
   String _errorMessage = '';
+
+  // (removed) Likes & comments state
   
   // Retry mechanism
   int _retryCount = 0;
@@ -115,6 +122,8 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
     
     debugPrint('Blood Donation Screen Error: $message');
   }
+
+  
 
   void _clearError() {
     if (!mounted) return;
@@ -323,6 +332,27 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
+                  // Inbox icon
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const InboxScreen(),
+                        ),
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white.withOpacity(0.12)),
+                      ),
+                      child: const Icon(Icons.inbox, size: 20, color: Colors.white),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   _buildLogoutButton(),
                 ],
               ),
@@ -380,7 +410,10 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
     final selected = _selectedTab == index;
     return Expanded(
       child: GestureDetector(
-        onTap: () => setState(() => _selectedTab = index),
+        onTap: () {
+          setState(() => _selectedTab = index);
+          _loadDonors();
+        },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -562,6 +595,8 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
                   ),
                   const SizedBox(height: 16),
                   _buildRadiusSlider(),
+                  const SizedBox(height: 8),
+                  _buildGpsToggle(),
                   const SizedBox(height: 16),
                   Center(
                     child: ElevatedButton.icon(
@@ -595,6 +630,88 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
     );
   }
 
+  Widget _buildGpsToggle() {
+    return InkWell(
+      onTap: () async {
+        final newVal = !_useGpsRadius;
+        if (newVal) {
+          final ok = await _ensureLocation();
+          if (!ok) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Location permission required for GPS radius search')),
+            );
+            return;
+          }
+        }
+        setState(() => _useGpsRadius = newVal);
+        _loadDonors();
+      },
+      child: Row(
+        children: [
+          Checkbox(
+            value: _useGpsRadius,
+            onChanged: (val) async {
+              final newVal = val ?? false;
+              if (newVal) {
+                final ok = await _ensureLocation();
+                if (!ok) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Location permission required for GPS radius search')),
+                  );
+                  return;
+                }
+              }
+              setState(() => _useGpsRadius = newVal);
+              _loadDonors();
+            },
+            activeColor: AppTheme.primaryColor,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Use GPS location to search within ${_radius.toInt()} km',
+              style: const TextStyle(color: Colors.white, fontFamily: 'Montserrat'),
+            ),
+          ),
+          if (_useGpsRadius && _currentPosition != null)
+            Icon(Icons.gps_fixed, color: AppTheme.primaryColor, size: 18),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _ensureLocation() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        return false;
+      }
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) return false;
+      }
+      if (permission == LocationPermission.deniedForever) return false;
+      _currentPosition = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  double _distanceInKm(double lat1, double lon1, double lat2, double lon2) {
+    const double earthRadiusKm = 6371.0;
+    final dLat = _deg2rad(lat2 - lat1);
+    final dLon = _deg2rad(lon2 - lon1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_deg2rad(lat1)) * math.cos(_deg2rad(lat2)) *
+            math.sin(dLon / 2) * math.sin(dLon / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadiusKm * c;
+  }
+
+  double _deg2rad(double deg) => deg * (math.pi / 180.0);
+
   Widget _buildCityDropdown() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -619,6 +736,9 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
           onChanged: (value) {
             setState(() => _selectedCity = value ?? 'Dhaka');
             _loadDonationRequests();
+            if (!_useGpsRadius) {
+              _loadDonors();
+            }
           },
         ),
       ),
@@ -1093,18 +1213,29 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.people, color: Colors.white.withOpacity(0.5), size: 50),
+                  Icon(
+                    _selectedTab == 0 ? Icons.people : Icons.person_add,
+                    color: Colors.white.withOpacity(0.5),
+                    size: 50
+                  ),
                   const SizedBox(height: 16),
                   Text(
-                    "No registered donors found",
+                    _selectedTab == 0 
+                        ? "No registered donors found in your area"
+                        : "You haven't registered as a donor yet",
                     style: TextStyle(color: Colors.white.withOpacity(0.7), fontFamily: 'Montserrat'),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
                   ElevatedButton.icon(
-                    onPressed: _loadDonors,
-                    icon: const Icon(Icons.refresh, size: 16),
-                    label: const Text("Retry"),
+                    onPressed: _selectedTab == 0 ? _loadDonors : () {
+                      // Focus on the registration form
+                      setState(() {
+                        // This will trigger the form to be visible
+                      });
+                    },
+                    icon: Icon(_selectedTab == 0 ? Icons.refresh : Icons.add, size: 16),
+                    label: Text(_selectedTab == 0 ? "Retry" : "Register Now"),
                     style: ElevatedButton.styleFrom(
                       foregroundColor: Colors.white,
                       backgroundColor: AppTheme.accentColor.withOpacity(0.6),
@@ -1272,6 +1403,7 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
                           onPressed: () => _openChat(request['userId'], request['name'] ?? 'User'),
                         ),
                       ],
+                      
                       Text(
                         formattedDate,
                         style: TextStyle(
@@ -1282,6 +1414,7 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
                       ),
                     ],
                   ),
+                  
                 ],
               ),
             ),
@@ -1425,13 +1558,14 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
                         ),
                       ),
                       const Spacer(),
-                      // Chat button
-                      if (donor['userId'] != FirebaseAuth.instance.currentUser?.uid) ...[
+                      // Chat button - only show in Find Donor tab and for other users
+                      if (_selectedTab == 0 && donor['userId'] != FirebaseAuth.instance.currentUser?.uid) ...[
                         IconButton(
                           icon: Icon(Icons.chat, color: AppTheme.accentColor, size: 20),
                           onPressed: () => _openChat(donor['userId'], donor['name'] ?? 'User'),
                         ),
                       ],
+                      
                       Text(
                         formattedDate,
                         style: TextStyle(
@@ -1442,6 +1576,7 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
                       ),
                     ],
                   ),
+                  
                 ],
               ),
             ),
@@ -1601,6 +1736,19 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
         throw Exception('User not authenticated');
       }
 
+      // Try to capture coordinates for better discovery in live GPS mode
+      double? lat;
+      double? lng;
+      try {
+        final ok = await _ensureLocation();
+        if (ok && _currentPosition != null) {
+          lat = _currentPosition!.latitude;
+          lng = _currentPosition!.longitude;
+        }
+      } catch (_) {
+        // Ignore; proceed without coordinates if unavailable
+      }
+
       // Add donor with proper error handling
       await FirebaseFirestore.instance.collection('blood_donors').add({
         'userId': user.uid,
@@ -1611,6 +1759,8 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
         'city': _selectedCity,
         'timestamp': FieldValue.serverTimestamp(),
         'status': 'active',
+        if (lat != null && lng != null) 'latitude': lat,
+        if (lat != null && lng != null) 'longitude': lng,
       }).timeout(const Duration(seconds: 30), onTimeout: () {
         throw Exception('Request timeout. Please check your connection.');
       });
@@ -1704,12 +1854,14 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
       }).where((data) => data != null).cast<Map<String, dynamic>>().toList();
 
       // Filter by blood type and city in memory instead of in query
+      // Exclude current user's own requests
       final filteredRequests = requests.where((request) {
         try {
           final matchesBloodType = request['bloodType'] == _selectedBloodType;
           final matchesCity = request['city'] == _selectedCity;
           final isActive = request['status'] == 'active';
-          return matchesBloodType && matchesCity && isActive;
+          final isNotCurrentUser = request['userId'] != user.uid; // Exclude current user's requests
+          return matchesBloodType && matchesCity && isActive && isNotCurrentUser;
         } catch (e) {
           debugPrint('Error filtering request: $e');
           return false;
@@ -1785,6 +1937,9 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
           data['bloodType'] = data['bloodType'] ?? 'Unknown';
           data['status'] = data['status'] ?? 'active';
           data['timestamp'] = data['timestamp'] ?? Timestamp.now();
+          // Optional coordinates
+          data['latitude'] = (data['latitude'] is num) ? (data['latitude'] as num).toDouble() : null;
+          data['longitude'] = (data['longitude'] is num) ? (data['longitude'] as num).toDouble() : null;
           return data;
         } catch (e) {
           debugPrint('Error processing donor document: $e');
@@ -1792,13 +1947,40 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
         }
       }).where((data) => data != null).cast<Map<String, dynamic>>().toList();
 
-      // Filter by blood type, city, and radius in memory
+      // Filter based on selected tab
       final filteredDonors = donors.where((donor) {
         try {
-          final matchesBloodType = donor['bloodType'] == _selectedBloodType;
-          final matchesCity = donor['city'] == _selectedCity;
           final isActive = donor['status'] == 'active';
-          return matchesBloodType && matchesCity && isActive;
+          
+          if (_selectedTab == 0) {
+            // Find Donor tab: Show other users' donors, exclude current user
+            final matchesBloodType = donor['bloodType'] == _selectedBloodType;
+            final matchesCity = donor['city'] == _selectedCity;
+            final isNotCurrentUser = donor['userId'] != user.uid;
+            // Decide location filter based on GPS toggle
+            bool meetsLocation;
+            if (_useGpsRadius) {
+              if (_currentPosition != null && donor['latitude'] != null && donor['longitude'] != null) {
+                final distance = _distanceInKm(
+                  _currentPosition!.latitude,
+                  _currentPosition!.longitude,
+                  donor['latitude'] as double,
+                  donor['longitude'] as double,
+                );
+                meetsLocation = distance <= _radius + 0.001; // epsilon
+              } else {
+                meetsLocation = false; // no coords -> exclude in GPS mode
+              }
+            } else {
+              meetsLocation = matchesCity; // manual city select
+            }
+
+            return matchesBloodType && isActive && isNotCurrentUser && meetsLocation;
+          } else {
+            // Donate tab: Show only current user's donor registration
+            final isCurrentUser = donor['userId'] == user.uid;
+            return isActive && isCurrentUser;
+          }
         } catch (e) {
           debugPrint('Error filtering donor: $e');
           return false;
@@ -1846,10 +2028,11 @@ class _BloodDonationScreenState extends State<BloodDonationScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => PrivateChatScreen(
+        builder: (_) => ChatThreadScreen(
           currentUserId: currentUser.uid,
           peerId: peerId,
           peerName: peerName,
+          category: 'blood',
         ),
       ),
     );

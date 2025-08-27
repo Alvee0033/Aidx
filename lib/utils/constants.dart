@@ -16,6 +16,14 @@ class AppConstants {
   static const String heartRateMeasurementCharUuid = "00002a37-0000-1000-8000-00805f9b34fb";
   static const String pulseOximeterServiceUuid = "00001822-0000-1000-8000-00805f9b34fb";
   static const String spo2MeasurementCharUuid = "00002a5f-0000-1000-8000-00805f9b34fb";
+  // Blood Pressure (standard)
+  static const String bloodPressureServiceUuid = "00001810-0000-1000-8000-00805f9b34fb"; // Blood Pressure Service
+  static const String bloodPressureMeasurementCharUuid = "00002a35-0000-1000-8000-00805f9b34fb"; // Blood Pressure Measurement
+  // Proprietary placeholders (replace after identifying via BLE scanner like nRF Connect)
+  static const String proprietarySpO2ServiceUuid = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+  static const String proprietarySpO2CharUuid = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+  static const String proprietaryBpServiceUuid = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+  static const String proprietaryBpCharUuid = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
   
   // Emergency SOS
   static const int sosMonitoringIntervalMs = 1000; // Check vitals every second
@@ -52,6 +60,22 @@ class AppConstants {
   static const String routeNewsDetail = "/news_detail";
   static const String routeBloodDonation = "/blood-donation";
   static const String routeVitals = '/vitals';
+     static const String routeHealthId = '/health-id';
+   static const String routePermissions = '/permissions';
+   static const String routeAiVision = '/ai-vision';
+  static const String routeAiVideoCall = '/ai-video-call';
+
+  // Legal/Privacy
+  static const String healthDisclaimer =
+      "This app displays smartwatch vitals for wellness only and is not a substitute for professional medical advice.";
+  
+  // Elderly Features Routes
+
+  static const String routeHealthHabits = '/health_habits';
+  static const String routeSleepFallDetection = '/sleep_fall_detection';
+
+  static const String routeCommunitySupport = '/community_support';
+
 
   // Telegram SOS
   // TODO: Replace with your actual bot token and chat ID

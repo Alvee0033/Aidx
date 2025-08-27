@@ -38,6 +38,22 @@ class HealthDataModel {
     );
   }
 
+  factory HealthDataModel.fromMap(Map<String, dynamic> data) {
+    return HealthDataModel(
+      id: data['id'],
+      userId: data['userId'] ?? '',
+      type: data['type'] ?? '',
+      value: data['value'],
+      unit: data['unit'] ?? '',
+      timestamp: data['timestamp'] is Timestamp 
+          ? (data['timestamp'] as Timestamp).toDate()
+          : DateTime.parse(data['timestamp']),
+      source: data['source'] ?? 'manual',
+      notes: data['notes'],
+      metadata: data['metadata'],
+    );
+  }
+
   Map<String, dynamic> toFirestore() {
     return {
       'userId': userId,

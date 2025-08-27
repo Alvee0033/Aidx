@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
 import 'dart:math';
 import '../utils/theme.dart';
 import '../utils/constants.dart';
 import '../widgets/hospital_card.dart';
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
+import '../config/api_config.dart';
 
 class HospitalScreen extends StatefulWidget {
-  const HospitalScreen({Key? key}) : super(key: key);
+  const HospitalScreen({super.key});
 
   @override
   State<HospitalScreen> createState() => _HospitalScreenState();
@@ -20,7 +20,41 @@ class _HospitalScreenState extends State<HospitalScreen> {
   List<Map<String, dynamic>> _hospitals = [];
   bool _isLoading = false;
   String _statusMessage = '';
-  Position? _currentPosition;
+
+  // Caching mechanism for performance optimization
+  Map<String, dynamic>? _cachedLocation;
+  List<Map<String, dynamic>>? _cachedHospitals;
+  DateTime? _locationCacheTime;
+  DateTime? _hospitalsCacheTime;
+  static const Duration _locationCacheDuration = Duration(minutes: 30);
+  static const Duration _hospitalsCacheDuration = Duration(minutes: 10);
+
+  // Cache management methods
+  bool _isLocationCacheValid() {
+    if (_cachedLocation == null || _locationCacheTime == null) return false;
+    return DateTime.now().difference(_locationCacheTime!) < _locationCacheDuration;
+  }
+
+  bool _isHospitalsCacheValid(double lat, double lon) {
+    if (_cachedHospitals == null || _hospitalsCacheTime == null) return false;
+    if (DateTime.now().difference(_hospitalsCacheTime!) > _hospitalsCacheDuration) return false;
+
+    // Check if location has changed significantly (>1km)
+    final cachedLat = _cachedLocation?['lat'] ?? 0.0;
+    final cachedLon = _cachedLocation?['lon'] ?? 0.0;
+    final distance = _haversineDistance(lat, lon, cachedLat, cachedLon);
+    return distance < 1000; // 1km threshold
+  }
+
+  void _updateLocationCache(Map<String, dynamic> locationData) {
+    _cachedLocation = locationData;
+    _locationCacheTime = DateTime.now();
+  }
+
+  void _updateHospitalsCache(List<Map<String, dynamic>> hospitals) {
+    _cachedHospitals = hospitals;
+    _hospitalsCacheTime = DateTime.now();
+  }
   
   // Helper function to compute distance using Haversine formula
   double _haversineDistance(double lat1, double lon1, double lat2, double lon2) {
@@ -36,39 +70,44 @@ class _HospitalScreenState extends State<HospitalScreen> {
     return degrees * pi / 180;
   }
 
-  // Get coordinates using both live GPS location and IP geolocation
+  // Get coordinates using both live GPS location and IP geolocation (optimized with caching)
   Future<Map<String, dynamic>> _getCoordinates() async {
+    // Check cache first
+    if (_isLocationCacheValid()) {
+      print('Using cached location data');
+      return _cachedLocation!;
+    }
+
     Map<String, double>? gpsLocation;
     Map<String, double>? ipLocation;
-    String locationSource = '';
     
-    // Try GPS location first (most accurate)
+    // Try GPS location first (most accurate) with reduced timeout
     try {
       print('Trying GPS location...');
         final position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 15),
+        timeLimit: const Duration(seconds: 5), // Reduced from 15 seconds
       );
       gpsLocation = {
         'lat': position.latitude,
         'lon': position.longitude,
       };
       print('GPS location successful: ${position.latitude}, ${position.longitude}');
-      locationSource = 'GPS';
     } catch (e) {
       print('GPS location failed: $e');
     }
 
-    // Always try IP geolocation as backup or for additional context
+    // Try IP geolocation services in parallel for faster results
     try {
-      print('Trying IP geolocation...');
+      print('Trying IP geolocation services in parallel...');
     final ipServices = [
       'https://ipapi.co/json/',
       'https://ipinfo.io/json',
         'https://api.myip.com/api/v1/ip',
     ];
 
-    for (final service in ipServices) {
+      // Create futures for all IP services
+      final ipFutures = ipServices.map((service) async {
       try {
         print('Trying IP geolocation with: $service');
         final response = await http.get(
@@ -77,7 +116,7 @@ class _HospitalScreenState extends State<HospitalScreen> {
             'Accept': 'application/json',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           },
-          ).timeout(const Duration(seconds: 8));
+          ).timeout(const Duration(seconds: 3)); // Reduced from 8 seconds
         
         if (response.statusCode == 200) {
           final data = json.decode(response.body);
@@ -99,15 +138,29 @@ class _HospitalScreenState extends State<HospitalScreen> {
               lon = data['longitude']?.toDouble();
           }
           
+            if (lat != null && lon != null) {
+              print('IP geolocation successful with $service: $lat, $lon');
+              return {'lat': lat, 'lon': lon};
+            }
+          }
+        } catch (e) {
+          print('IP geolocation failed with $service: $e');
+        }
+        return null;
+      });
+
+      // Wait for first successful result with timeout
+      final results = await Future.wait(ipFutures).timeout(const Duration(seconds: 4));
+
+      // Find first successful result
+      for (final result in results) {
+        if (result != null) {
+          final lat = result['lat'];
+          final lon = result['lon'];
           if (lat != null && lon != null) {
               ipLocation = {'lat': lat, 'lon': lon};
-            print('IP geolocation successful: $lat, $lon');
               break;
           }
-        }
-      } catch (e) {
-        print('IP geolocation failed with $service: $e');
-        continue;
       }
     }
     } catch (e) {
@@ -115,9 +168,10 @@ class _HospitalScreenState extends State<HospitalScreen> {
     }
 
     // Determine which location to use
+    Map<String, dynamic> locationData;
     if (gpsLocation != null) {
       // GPS is available - use it as primary, IP as backup info
-      return {
+      locationData = {
         'lat': gpsLocation['lat']!,
         'lon': gpsLocation['lon']!,
         'source': 'GPS',
@@ -128,7 +182,7 @@ class _HospitalScreenState extends State<HospitalScreen> {
       };
     } else if (ipLocation != null) {
       // Only IP location available
-      return {
+      locationData = {
         'lat': ipLocation['lat']!,
         'lon': ipLocation['lon']!,
         'source': 'IP',
@@ -140,7 +194,7 @@ class _HospitalScreenState extends State<HospitalScreen> {
     } else {
       // Fallback to default location
     print('Using default location');
-    return {
+      locationData = {
       'lat': 40.7128, // New York City coordinates as fallback
       'lon': -74.0060,
         'source': 'Default',
@@ -150,19 +204,19 @@ class _HospitalScreenState extends State<HospitalScreen> {
         'has_backup': false,
     };
     }
+
+    // Cache the location data
+    _updateLocationCache(locationData);
+    return locationData;
       }
 
   // Fallback sample hospitals
   List<Map<String, dynamic>> _getSampleHospitals(double userLat, double userLon) {
-    // Generate sample hospitals around the user's location with more detailed contact info
+    // Generate sample hospitals around the user's location with basic info only
     final hospitals = [
       {
         'tags': {
           'name': 'City General Hospital', 
-          'phone': '+1 (555) 123-4567',
-          'contact:phone': '+1 (555) 123-4567',
-          'contact:email': 'info@citygeneral.com',
-          'website': 'www.citygeneral.com'
         },
         'distance': 1200.0,
         'center': {'lat': userLat + 0.01, 'lon': userLon + 0.01},
@@ -170,10 +224,6 @@ class _HospitalScreenState extends State<HospitalScreen> {
       {
         'tags': {
           'name': 'Community Medical Center', 
-          'phone': '+1 (555) 987-6543',
-          'contact:phone': '+1 (555) 987-6543',
-          'contact:email': 'contact@communitymed.org',
-          'website': 'www.communitymed.org'
         },
         'distance': 2500.0,
         'center': {'lat': userLat - 0.008, 'lon': userLon + 0.015},
@@ -181,10 +231,6 @@ class _HospitalScreenState extends State<HospitalScreen> {
       {
         'tags': {
           'name': 'University Hospital', 
-          'phone': '+1 (555) 456-7890',
-          'contact:phone': '+1 (555) 456-7890',
-          'contact:email': 'info@universityhospital.edu',
-          'website': 'www.universityhospital.edu'
         },
         'distance': 3800.0,
         'center': {'lat': userLat + 0.015, 'lon': userLon - 0.012},
@@ -192,10 +238,6 @@ class _HospitalScreenState extends State<HospitalScreen> {
       {
         'tags': {
           'name': 'Riverside Health Clinic', 
-          'phone': '+1 (555) 789-0123',
-          'contact:phone': '+1 (555) 789-0123',
-          'contact:email': 'contact@riversidehealth.com',
-          'website': 'www.riversidehealth.com'
         },
         'distance': 4200.0,
         'center': {'lat': userLat - 0.012, 'lon': userLon - 0.008},
@@ -203,10 +245,6 @@ class _HospitalScreenState extends State<HospitalScreen> {
       {
         'tags': {
           'name': 'Emergency Care Center', 
-          'phone': '+1 (555) 321-6540',
-          'contact:phone': '+1 (555) 321-6540',
-          'contact:email': 'emergency@carecenters.org',
-          'website': 'www.emergencycarecenters.org'
         },
         'distance': 5500.0,
         'center': {'lat': userLat + 0.018, 'lon': userLon + 0.020},
@@ -216,10 +254,18 @@ class _HospitalScreenState extends State<HospitalScreen> {
     return hospitals;
   }
 
-  // Modify hospital fetching to extract more contact details
+  // Simple hospital fetching - include multiple healthcare tags and no artificial limit
   Future<List<Map<String, dynamic>>> _fetchHospitalsRadius(
       double lat, double lon, int radius) async {
-    final query = '[out:json];(node["amenity"="hospital"](around:$radius,$lat,$lon);way["amenity"="hospital"](around:$radius,$lat,$lon);relation["amenity"="hospital"](around:$radius,$lat,$lon););out center 50;';
+    // Include both classic and newer OSM healthcare tagging schemes
+    final query = '[out:json];('
+        'node(around:$radius,$lat,$lon)["amenity"~"hospital|clinic|health_centre"];'
+        'way(around:$radius,$lat,$lon)["amenity"~"hospital|clinic|health_centre"];'
+        'relation(around:$radius,$lat,$lon)["amenity"~"hospital|clinic|health_centre"];'
+        'node(around:$radius,$lat,$lon)["healthcare"~"hospital|clinic|centre"];'
+        'way(around:$radius,$lat,$lon)["healthcare"~"hospital|clinic|centre"];'
+        'relation(around:$radius,$lat,$lon)["healthcare"~"hospital|clinic|centre"];'
+        ');out center;';
     final url = 'https://overpass-api.de/api/interpreter?data=${Uri.encodeComponent(query)}';
     
     try {
@@ -230,42 +276,24 @@ class _HospitalScreenState extends State<HospitalScreen> {
           'Accept': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(const Duration(seconds: 15)); // Reduced timeout for faster loading
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final hospitals = (data['elements'] as List).cast<Map<String, dynamic>>();
-        
-        // Enhance hospital data with additional contact information
-        final enhancedHospitals = hospitals.map((hospital) {
-          // Combine different possible phone number tags
-          final phone = hospital['tags']?['phone'] ?? 
-                        hospital['tags']?['contact:phone'] ?? 
-                        hospital['tags']?['contact:mobile'] ?? 
-                        'No phone available';
-          
-          // Add more contact details if available
-          final email = hospital['tags']?['contact:email'] ?? 
-                        hospital['tags']?['email'] ?? 
-                        'No email available';
-          
-          final website = hospital['tags']?['website'] ?? 
-                          hospital['tags']?['contact:website'] ?? 
-                          'No website available';
-          
+
+        // Only keep basic hospital information (preserve id/type/center; tags only name for UI)
+        final basicHospitals = hospitals.map((hospital) {
           return {
             ...hospital,
             'tags': {
-              ...?hospital['tags'],
-              'phone': phone,
-              'contact:email': email,
-              'website': website,
+              'name': hospital['tags']?['name'] ?? 'Unnamed Hospital',
             }
           };
         }).toList();
-        
-        print('Found ${enhancedHospitals.length} hospitals with radius ${radius}m');
-        return enhancedHospitals;
+
+        print('Found ${basicHospitals.length} hospitals with radius ${radius}m');
+        return basicHospitals;
       } else {
         print('Overpass API error: ${response.statusCode}');
         return [];
@@ -276,17 +304,94 @@ class _HospitalScreenState extends State<HospitalScreen> {
     }
   }
 
-  Future<List<Map<String, dynamic>>> _fetchHospitals(double lat, double lon) async {
-    // Try different radii: 5km, 10km, 20km
-    for (final radius in [5000, 10000, 20000]) {
-      final hospitals = await _fetchHospitalsRadius(lat, lon, radius);
-      if (hospitals.isNotEmpty) {
-        return hospitals;
-      }
-      // Add a small delay between requests to be respectful to the API
-      await Future.delayed(const Duration(milliseconds: 1000));
+  // Google Places: single radius search (for parallel execution)
+  Future<List<Map<String, dynamic>>> _fetchHospitalsGoogleSingleRadius(
+      double lat, double lon, int radius) async {
+    final List<Map<String, dynamic>> results = [];
+    const apiKey = ApiConfig.googlePlacesApiKey;
+      final url = Uri.parse(
+        '${ApiConfig.googlePlacesBaseUrl}/textsearch/json?'
+        'query=hospital'
+        '&location=$lat,$lon'
+        '&radius=$radius'
+        '&type=hospital'
+        '&key=$apiKey',
+      );
+
+      try {
+      final response = await http.get(url).timeout(const Duration(seconds: 15)); // Reduced timeout
+      if (response.statusCode != 200) return results;
+        final data = json.decode(response.body);
+      if (data['status'] != 'OK') return results;
+
+      final List apiResults = (data['results'] as List);
+
+      for (final raw in apiResults) {
+          final geometry = raw['geometry'] as Map<String, dynamic>?;
+          final loc = geometry != null ? geometry['location'] as Map<String, dynamic>? : null;
+          final pLat = (loc != null ? (loc['lat'] as num?) : null)?.toDouble() ?? 0.0;
+          final pLon = (loc != null ? (loc['lng'] as num?) : null)?.toDouble() ?? 0.0;
+
+          final distanceMeters = _haversineDistance(lat, lon, pLat, pLon);
+
+        results.add({
+            'type': 'google_place',
+            'place_id': raw['place_id'],
+            'center': {'lat': pLat, 'lon': pLon},
+            'distance': distanceMeters,
+            'tags': {
+              'name': raw['name'] ?? 'Unnamed Hospital',
+            },
+          });
+        }
+      } catch (e) {
+      print('Google Places fetch error for radius $radius: $e');
     }
-    return [];
+
+    return results;
+  }
+
+
+
+  // Extract deduplication logic to separate method
+  List<Map<String, dynamic>> _deduplicateHospitals(List<Map<String, dynamic>> hospitals) {
+    final Map<String, Map<String, dynamic>> uniqueByKey = {};
+
+    for (final h in hospitals) {
+      final dynamic type = h['type'];
+      final dynamic id = h['id'];
+      final dynamic placeId = h['place_id'];
+      final center = h['center'] ?? (h['type'] == 'node' ? h : null) ?? {};
+      final double cLat = (center['lat'] as num?)?.toDouble() ?? 0.0;
+      final double cLon = (center['lon'] as num?)?.toDouble() ?? 0.0;
+      final String name = h['tags']?['name'] ?? 'Unnamed Hospital';
+
+      String key;
+      if (id != null && type is String && (type == 'node' || type == 'way' || type == 'relation')) {
+        key = 'osm:$type:$id';
+      } else if (placeId is String && placeId.isNotEmpty) {
+        key = 'g:$placeId';
+      } else {
+        // Fallback: coordinate bucket + name
+        final String latBucket = (cLat.toStringAsFixed(5));
+        final String lonBucket = (cLon.toStringAsFixed(5));
+        key = 'geo:$latBucket,$lonBucket:$name';
+      }
+
+      // Keep the closest distance if duplicates exist
+      if (!uniqueByKey.containsKey(key)) {
+        uniqueByKey[key] = h;
+      } else {
+        final existing = uniqueByKey[key]!;
+        final double existingDist = (existing['distance'] as num?)?.toDouble() ?? double.infinity;
+        final double newDist = (h['distance'] as num?)?.toDouble() ?? double.infinity;
+        if (newDist < existingDist) {
+          uniqueByKey[key] = h;
+        }
+      }
+    }
+
+    return uniqueByKey.values.toList();
   }
 
   Future<void> _findHospitals() async {
@@ -314,36 +419,128 @@ class _HospitalScreenState extends State<HospitalScreen> {
         _statusMessage = statusMsg;
       });
       
-      final hospitals = await _fetchHospitals(coords['lat']!, coords['lon']!);
-      
-      if (hospitals.isEmpty) {
+      // Start progressive hospital fetching
+      await _fetchHospitalsProgressive(coords['lat']!, coords['lon']!, locationData);
+
+    } catch (e) {
+      print('Error in _findHospitals: $e');
+      setState(() {
+        _statusMessage = 'Unable to find hospitals. Please try again.';
+        _isLoading = false;
+      });
+    }
+  }
+
+  // Progressive hospital fetching - shows results as they arrive
+  Future<void> _fetchHospitalsProgressive(double lat, double lon, Map<String, dynamic> locationData) async {
+    // Check cache first
+    if (_isHospitalsCacheValid(lat, lon)) {
+      print('Using cached hospital data');
+      final processedHospitals = _processHospitals(_cachedHospitals!, lat, lon);
+      setState(() {
+        _hospitals = processedHospitals.take(50).toList();
+        _statusMessage = 'Found ${processedHospitals.length} hospitals (from cache)';
+        _isLoading = false;
+      });
+      return;
+    }
+
+    final List<Map<String, dynamic>> allHospitals = [];
+
+    // Start with fast local search (small radius)
+    setState(() {
+      _statusMessage = 'Searching nearby hospitals...';
+    });
+
+    final fastFutures = [
+      _fetchHospitalsGoogleSingleRadius(lat, lon, 5000),
+      _fetchHospitalsRadius(lat, lon, 5000),
+    ];
+
+    try {
+      final fastResults = await Future.wait(fastFutures, eagerError: false);
+
+      for (final result in fastResults) {
+        allHospitals.addAll(result);
+      }
+
+      // Show initial results immediately if we have any
+      if (allHospitals.isNotEmpty) {
+        final processedHospitals = _processHospitals(allHospitals, lat, lon);
+        setState(() {
+          _hospitals = processedHospitals.take(20).toList(); // Show top 20
+          _statusMessage = 'Found ${processedHospitals.length} hospitals nearby (showing closest 20)...';
+          _isLoading = false; // Allow user interaction while we continue searching
+        });
+      }
+    } catch (e) {
+      print('Error in fast hospital search: $e');
+    }
+
+    // Continue with medium radius search in background
+    setState(() {
+      _statusMessage = 'Expanding search area...';
+    });
+
+    final mediumFutures = [
+      _fetchHospitalsGoogleSingleRadius(lat, lon, 10000),
+      _fetchHospitalsRadius(lat, lon, 10000),
+    ];
+
+    try {
+      final mediumResults = await Future.wait(mediumFutures, eagerError: false);
+
+      for (final result in mediumResults) {
+        allHospitals.addAll(result);
+      }
+
+      // Update results if we have more
+      if (allHospitals.length > _hospitals.length) {
+        final processedHospitals = _processHospitals(allHospitals, lat, lon);
+        setState(() {
+          _hospitals = processedHospitals.take(30).toList(); // Show top 30
+          _statusMessage = 'Found ${processedHospitals.length} hospitals (showing closest 30)...';
+        });
+      }
+    } catch (e) {
+      print('Error in medium hospital search: $e');
+    }
+
+    // Final search with larger radius (only if we still have few results)
+    if (allHospitals.length < 15) {
+      setState(() {
+        _statusMessage = 'Searching wider area...';
+      });
+
+      final largeFutures = [
+        _fetchHospitalsGoogleSingleRadius(lat, lon, 20000),
+        _fetchHospitalsRadius(lat, lon, 20000),
+      ];
+
+      try {
+        final largeResults = await Future.wait(largeFutures, eagerError: false);
+
+        for (final result in largeResults) {
+          allHospitals.addAll(result);
+        }
+      } catch (e) {
+        print('Error in large hospital search: $e');
+      }
+    }
+
+    // Final processing and update
+    final processedHospitals = _processHospitals(allHospitals, lat, lon);
+
+    if (processedHospitals.isEmpty) {
         // Fallback to sample hospitals if API fails
         print('No hospitals found via API, using sample data');
-        final sampleHospitals = _getSampleHospitals(coords['lat']!, coords['lon']!);
+      final sampleHospitals = _getSampleHospitals(lat, lon);
         setState(() {
           _hospitals = sampleHospitals;
           _statusMessage = 'Showing sample hospitals (real-time data unavailable)';
         });
         return;
       }
-
-      // Calculate distances and sort
-      final processedHospitals = hospitals.map((hospital) {
-        final center = hospital['type'] == 'node' ? hospital : hospital['center'];
-        final distance = _haversineDistance(
-          coords['lat']!,
-          coords['lon']!,
-          center['lat'].toDouble(),
-          center['lon'].toDouble(),
-        );
-        return {
-          ...hospital,
-          'distance': distance,
-          'center': center,
-        };
-      }).toList();
-
-      processedHospitals.sort((a, b) => a['distance'].compareTo(b['distance']));
 
       // Create final status message with location info
       String finalStatus = '';
@@ -358,20 +555,36 @@ class _HospitalScreenState extends State<HospitalScreen> {
         finalStatus = 'Found ${processedHospitals.length} hospitals using default location';
       }
 
+    // Cache the hospital data for future use
+    _updateHospitalsCache(processedHospitals);
+
       setState(() {
-        _hospitals = processedHospitals; // Show all hospitals, not just 10
+      _hospitals = processedHospitals.take(50).toList(); // Limit to top 50 for performance
         _statusMessage = finalStatus;
-      });
-    } catch (e) {
-      print('Error in _findHospitals: $e');
-      setState(() {
-        _statusMessage = 'Unable to find hospitals. Please try again.';
-      });
-    } finally {
-      setState(() {
         _isLoading = false;
       });
     }
+
+  // Helper method to process hospitals (calculate distances, sort, etc.)
+  List<Map<String, dynamic>> _processHospitals(List<Map<String, dynamic>> hospitals, double userLat, double userLon) {
+    final deduplicated = _deduplicateHospitals(hospitals);
+
+    final processedHospitals = deduplicated.map((hospital) {
+      final centerRaw = hospital['type'] == 'node' ? hospital : (hospital['center'] ?? {});
+      final cLat = (centerRaw['lat'] as num?)?.toDouble() ?? 0.0;
+      final cLon = (centerRaw['lon'] as num?)?.toDouble() ?? 0.0;
+      final distance = (hospital['distance'] is num)
+          ? (hospital['distance'] as num).toDouble()
+          : _haversineDistance(userLat, userLon, cLat, cLon);
+      return {
+        ...hospital,
+        'distance': distance,
+        'center': {'lat': cLat, 'lon': cLon},
+      };
+    }).toList();
+
+    processedHospitals.sort((a, b) => a['distance'].compareTo(b['distance']));
+    return processedHospitals;
   }
   
 
@@ -387,13 +600,13 @@ class _HospitalScreenState extends State<HospitalScreen> {
           icon: const Icon(FeatherIcons.arrowLeft, color: AppTheme.textTeal),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Row(
+        title: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(FeatherIcons.mapPin, color: AppTheme.textTeal, size: 18),
-            const SizedBox(width: 6),
+            Icon(FeatherIcons.mapPin, color: AppTheme.textTeal, size: 18),
+            SizedBox(width: 6),
             Flexible(
-              child: const Text(
+              child: Text(
                 'Nearby Hospital Finder',
                 style: TextStyle(
                   fontSize: 16,
@@ -435,7 +648,7 @@ class _HospitalScreenState extends State<HospitalScreen> {
           child: Column(
             children: [
               // Find Hospitals Button
-              Container(
+              SizedBox(
                 width: double.infinity,
               child: ElevatedButton.icon(
                   onPressed: _isLoading ? null : _findHospitals,
@@ -458,8 +671,8 @@ class _HospitalScreenState extends State<HospitalScreen> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ).copyWith(
-                    backgroundColor: MaterialStateProperty.resolveWith<Color>((states) {
-                      if (states.contains(MaterialState.disabled)) {
+                    backgroundColor: WidgetStateProperty.resolveWith<Color>((states) {
+                      if (states.contains(WidgetState.disabled)) {
                         return AppTheme.primaryColor.withOpacity(0.5);
                       }
                       return AppTheme.primaryGradient.colors.first;
@@ -477,7 +690,7 @@ class _HospitalScreenState extends State<HospitalScreen> {
                 decoration: AppTheme.cardDecoration.copyWith(
                   color: AppTheme.bgGlassLight.withOpacity(0.5),
                 ),
-                child: Column(
+                child: const Column(
                   children: [
                                         Text(
                       'This will use both GPS location (high accuracy) and IP location (backup) to find nearby hospitals. All found hospitals will be displayed.',
@@ -525,8 +738,8 @@ class _HospitalScreenState extends State<HospitalScreen> {
                         textAlign: TextAlign.center,
                       ),
                       if (_statusMessage.contains('Unable to obtain location'))
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
+                        const Padding(
+                          padding: EdgeInsets.only(top: 8),
                           child: Text(
                             'Please allow location access in your browser settings or check your internet connection.',
                             style: TextStyle(

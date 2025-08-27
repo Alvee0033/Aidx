@@ -3,8 +3,8 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_service.dart';
 import '../services/news_service.dart';
-import '../services/bluetooth_service.dart';
-import '../services/esp32_max30102_service.dart';
+import '../services/app_state_service.dart';
+import '../services/android_wearable_service.dart';
 import '../services/notification_service.dart';
 import '../models/news_model.dart';
 import '../utils/app_colors.dart';
@@ -18,6 +18,10 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:aidx/screens/news_detail_screen.dart';
 import 'dart:ui';
 import '../screens/vitals_screen.dart';
+import '../widgets/sync_status_widget.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'inbox_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -43,15 +47,14 @@ class _DashboardScreenState extends State<DashboardScreen>
   String _spo2 = '98'; // %
   String _temperature = '--';
   String _batteryLevel = '--';
-  bool _isESP32Connected = false;
+  bool _isWatchConnected = false;
   NewsArticle? _currentNews;
   bool _isLoadingNews = false;
   List<NewsArticle> _newsPool = [];
   Timer? _newsRotationTimer;
 
   final NewsService _newsService = NewsService();
-  final BluetoothService _bluetoothService = BluetoothService();
-  final ESP32MAX30102Service _esp32Service = ESP32MAX30102Service();
+  AndroidWearableService? _wearableService;
   final NotificationService _notificationService = NotificationService();
   
   @override
@@ -60,7 +63,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     _initializeAnimations();
     _loadUserMood();
     _loadHealthNews();
-    _initializeESP32Service();
+    _initializeWearableService();
     _startNewsRotation();
   }
 
@@ -106,11 +109,35 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Future<void> _saveUserMood(String mood) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('user_mood', mood);
-    setState(() {
-      _selectedMood = mood;
-    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('user_mood', mood);
+      
+      setState(() {
+        _selectedMood = mood;
+      });
+      
+      debugPrint('✅ User mood saved: $mood');
+      
+      // Also save to Firebase if user is logged in
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(currentUser.uid)
+              .update({
+            'mood': mood,
+            'lastMoodUpdate': FieldValue.serverTimestamp(),
+          });
+          debugPrint('✅ User mood saved to Firebase');
+        } catch (e) {
+          debugPrint('⚠️ Error saving mood to Firebase: $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error saving user mood: $e');
+    }
   }
 
   Future<void> _loadHealthNews({bool force = false}) async {
@@ -210,60 +237,24 @@ class _DashboardScreenState extends State<DashboardScreen>
     });
   }
   
-  void _initializeESP32Service() async {
-    await _esp32Service.init();
-    
-    // Listen to ESP32 connection state
-    _esp32Service.connectionStateStream.listen((isConnected) {
-      if (mounted) {
-        setState(() {
-          _isESP32Connected = isConnected;
-          // Reset values when disconnected
-          if (!isConnected) {
-            // Re-apply demo placeholders when device disconnects
-            _heartRate = '72';
-            _spo2 = '98';
-            _temperature = '--';
-            _batteryLevel = '--';
-          }
-        });
-      }
-    });
-    
-    // Listen to heart rate updates
-    _esp32Service.heartRateStream.listen((heartRate) {
-      if (mounted && heartRate > 0) {
-        setState(() {
-          _heartRate = heartRate.toString();
-        });
-      }
-    });
-    
-    // Listen to SpO2 updates
-    _esp32Service.spo2Stream.listen((spo2) {
-      if (mounted && spo2 > 0) {
-        setState(() {
-          _spo2 = spo2.toString();
-        });
-      }
-    });
-    
-    // Listen to temperature updates
-    _esp32Service.temperatureStream.listen((temperature) {
-      if (mounted && temperature > 0) {
-        setState(() {
-          _temperature = temperature.toStringAsFixed(1);
-        });
-      }
-    });
-    
-    // Listen to battery updates
-    _esp32Service.batteryStream.listen((battery) {
-      if (mounted && battery > 0) {
-        setState(() {
-          _batteryLevel = battery.toString();
-        });
-      }
+  void _initializeWearableService() async {
+    _wearableService = context.read<AndroidWearableService>();
+    // Attempt auto-reconnect (service already tries on init, but do again on dashboard)
+    // ignore: unawaited_futures
+    _wearableService!.autoReconnect();
+
+    // Listen to changes via ChangeNotifier
+    _wearableService!.addListener(() {
+      if (!mounted) return;
+      setState(() {
+        final svc = _wearableService!;
+        _isWatchConnected = svc.isConnected;
+        // Update vitals from wearable service
+        if (svc.heartRate > 0) _heartRate = svc.heartRate.toString();
+        if (svc.spo2 > 0) _spo2 = svc.spo2.toString();
+        if (svc.temperature > 0) _temperature = svc.temperature.toString();
+        if (svc.batteryLevel > 0) _batteryLevel = svc.batteryLevel.round().toString();
+      });
     });
   }
 
@@ -288,10 +279,10 @@ class _DashboardScreenState extends State<DashboardScreen>
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
+                gradient: const LinearGradient(
                   begin: Alignment.centerLeft,
                   end: Alignment.centerRight,
-                  colors: [Color(0xFF1F2937), Color(0xFF374151), Color(0xFF4B5563)],
+                  colors: [AppTheme.bgMedium, AppTheme.bgDark, AppTheme.bgLight],
                 ),
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -313,6 +304,17 @@ class _DashboardScreenState extends State<DashboardScreen>
           ],
         ),
         actions: [
+          // Inbox icon
+          IconButton(
+            tooltip: 'Inbox',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const InboxScreen()),
+              );
+            },
+            icon: const Icon(FeatherIcons.inbox, color: Colors.white),
+          ),
           Consumer<AuthService>(
             builder: (context, authService, child) {
               final user = authService.currentUser;
@@ -325,10 +327,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                   margin: const EdgeInsets.symmetric(horizontal: 16),
                   padding: const EdgeInsets.all(2),
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
+                    gradient: const LinearGradient(
                       begin: Alignment.centerLeft,
                       end: Alignment.centerRight,
-                      colors: [Color(0xFF1F2937), Color(0xFF374151), Color(0xFF4B5563)],
+                      colors: [AppTheme.bgMedium, AppTheme.bgDark, AppTheme.bgLight],
                     ),
                     borderRadius: BorderRadius.circular(20),
                   ),
@@ -439,9 +441,11 @@ class _DashboardScreenState extends State<DashboardScreen>
               ],
             ),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
                 // Animated heart icon with glow
                 AnimatedBuilder(
                   animation: _pulseAnimation,
@@ -463,7 +467,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                           padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(
-                              colors: [Color(0xFFF472B6), Color(0xFFFB7185)],
+                              colors: [AppTheme.primaryColor, AppTheme.accentColor],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                             ),
@@ -510,7 +514,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                           height: 6,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: _isESP32Connected ? AppTheme.successColor : AppTheme.dangerColor,
+                            color: _isWatchConnected ? AppTheme.successColor : AppTheme.dangerColor,
                           ),
                         ),
                       ],
@@ -519,24 +523,24 @@ class _DashboardScreenState extends State<DashboardScreen>
                       margin: const EdgeInsets.only(top: 2),
                       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
                       decoration: BoxDecoration(
-                        color: _isESP32Connected 
+                        color: _isWatchConnected 
                             ? AppTheme.successColor.withOpacity(0.16)
                             : AppTheme.dangerColor.withOpacity(0.16),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
-                        _isESP32Connected ? 'ESP32 Connected' : 'No Device',
+                        _isWatchConnected ? 'Watch Connected' : 'No Device',
                         style: TextStyle(
                           fontSize: 8,
                           fontWeight: FontWeight.w600,
-                          color: _isESP32Connected ? AppTheme.successColor : AppTheme.dangerColor,
+                          color: _isWatchConnected ? AppTheme.successColor : AppTheme.dangerColor,
                           fontFamily: 'Montserrat',
                         ),
                       ),
                     ),
                   ],
                 ),
-                const Spacer(),
+                const SizedBox(width: 10),
                 // Heart Rate Pill
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -777,7 +781,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   ),
                 ),
                 // Scan button when not connected
-                if (!_isESP32Connected) ...[
+                if (!_isWatchConnected) ...[
                   // Divider
                   Container(
                     margin: const EdgeInsets.symmetric(horizontal: 10),
@@ -791,10 +795,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                   // Scan Button
                   GestureDetector(
                     onTap: () {
-                      _esp32Service.startScan();
+                      _wearableService?.startScan();
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: const Text('Scanning for ESP32 Smart Band...'),
+                          content: const Text('Connecting to paired smartwatch...'),
                           backgroundColor: AppTheme.infoColor,
                           duration: const Duration(seconds: 2),
                         ),
@@ -841,6 +845,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   ),
                 ],
               ],
+            ),
             ),
           ),
         ],
@@ -893,7 +898,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 gradient: isSelected ? const LinearGradient(
                   begin: Alignment.centerLeft,
                   end: Alignment.centerRight,
-                  colors: [Color(0xFF1F2937), Color(0xFF374151), Color(0xFF4B5563)],
+                  colors: [AppTheme.bgMedium, AppTheme.bgDark, AppTheme.bgLight],
                 ) : null,
                 color: isSelected ? null : Colors.white.withOpacity(0.05),
                 borderRadius: BorderRadius.circular(8),
@@ -976,6 +981,31 @@ class _DashboardScreenState extends State<DashboardScreen>
         'color': AppTheme.dangerColor,
         'route': AppConstants.routeSos,
       },
+      {
+        'title': 'Health\nID',
+        'icon': Icons.badge_rounded,
+        'color': AppTheme.infoColor,
+        'route': AppConstants.routeHealthId,
+      },
+      {
+        'title': 'Health\nHabits',
+        'icon': Icons.self_improvement_rounded,
+        'color': AppTheme.successColor,
+        'route': AppConstants.routeHealthHabits,
+      },
+      {
+        'title': 'Sleep &\nFall Detect',
+        'icon': Icons.bedtime_rounded,
+        'color': AppTheme.accentColor,
+        'route': AppConstants.routeSleepFallDetection,
+      },
+      {
+        'title': 'Community\nSupport',
+        'icon': Icons.groups_rounded,
+        'color': AppTheme.primaryColor,
+        'route': AppConstants.routeCommunitySupport,
+      },
+
     ];
 
     return Column(
@@ -1297,7 +1327,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               mainAxisSize: MainAxisSize.max,
               children: [
                 // News Content
-                Expanded(
+                Expanded( 
                   child: Text(
                     _currentNews!.title,
                     style: const TextStyle(
@@ -1547,7 +1577,7 @@ class ECGPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = const Color(0xFFF472B6)
+      ..color = AppTheme.accentColor
       ..strokeWidth = 2.5
       ..strokeCap = StrokeCap.round;
 

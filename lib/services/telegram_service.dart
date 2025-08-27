@@ -83,4 +83,58 @@ class TelegramService {
 
     return resp.statusCode == 200;
   }
+
+  /// Send a live location pin that stays active for [livePeriodSeconds].
+  /// Returns the Telegram message_id if successful so it can be edited later.
+  Future<int?> sendLiveLocation(
+    double latitude,
+    double longitude, {
+    int livePeriodSeconds = 900, // 15 minutes
+    String? chatId,
+  }) async {
+    if (!_isConfigured) return null;
+
+    final uri = Uri.parse(
+        'https://api.telegram.org/bot${Uri.encodeComponent(_token)}/sendLocation');
+
+    final resp = await http.post(uri, body: {
+      'chat_id': chatId ?? _chatId,
+      'latitude': latitude.toString(),
+      'longitude': longitude.toString(),
+      'live_period': livePeriodSeconds.toString(),
+    }).timeout(const Duration(seconds: 10));
+
+    if (resp.statusCode == 200) {
+      try {
+        final data = json.decode(resp.body) as Map<String, dynamic>;
+        return (data['result']?['message_id']) as int?;
+      } catch (_) {
+        return null;
+      }
+    }
+    debugPrint('[TelegramService] Failed to send live location: ${resp.body}');
+    return null;
+  }
+
+  /// Update a previously sent live location message with new coordinates.
+  Future<bool> editLiveLocation({
+    required int messageId,
+    required double latitude,
+    required double longitude,
+    String? chatId,
+  }) async {
+    if (!_isConfigured) return false;
+
+    final uri = Uri.parse(
+        'https://api.telegram.org/bot${Uri.encodeComponent(_token)}/editMessageLiveLocation');
+
+    final resp = await http.post(uri, body: {
+      'chat_id': chatId ?? _chatId,
+      'message_id': messageId.toString(),
+      'latitude': latitude.toString(),
+      'longitude': longitude.toString(),
+    }).timeout(const Duration(seconds: 10));
+
+    return resp.statusCode == 200;
+  }
 } 

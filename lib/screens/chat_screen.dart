@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'dart:ui';
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:aidx/utils/constants.dart';
 
 enum AssistantState {
   greeting,
@@ -1478,11 +1479,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      IconButton(
-                        onPressed: _showVoiceSettings,
-                        icon: Icon(Icons.settings_voice, color: Colors.white, size: 28),
-                        tooltip: 'Voice Settings',
-                      ),
+                                             IconButton(
+                         onPressed: _showVoiceSettings,
+                         icon: Icon(Icons.settings_voice, color: Colors.white, size: 28),
+                         tooltip: 'Voice Settings',
+                       ),
+                       IconButton(
+                         onPressed: () => Navigator.of(context).pushNamed(AppConstants.routeAiVideoCall),
+                         icon: Icon(Icons.videocam, color: Colors.white, size: 28),
+                         tooltip: 'AI Video Call',
+                       ),
                       Flexible(
                         child: SingleChildScrollView(
                           scrollDirection: Axis.horizontal,

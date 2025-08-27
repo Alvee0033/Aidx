@@ -1,29 +1,29 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
-  // Primary colors
-  static const Color primaryColor = Color(0xFF2196F3);
-  static const Color accentColor = Color(0xFF03DAC6);
-  static const Color backgroundColor = Color(0xFFF5F5F5);
+  // Primary colors (subtle, modern)
+  static const Color primaryColor = Color(0xFF60A5FA); // blue-400
+  static const Color accentColor = Color(0xFF22D3EE);  // cyan-400
+  static const Color backgroundColor = Color(0xFF0F172A); // slate-900
   
   // Secondary colors
-  static const Color secondaryColor = Color(0xFF1976D2);
-  static const Color surfaceColor = Color(0xFFFFFFFF);
+  static const Color secondaryColor = Color(0xFF1E293B); // slate-800
+  static const Color surfaceColor = Color(0xFF111827);   // gray-900
   
-  // Text colors
-  static const Color textPrimary = Color(0xFF212121);
-  static const Color textSecondary = Color(0xFF757575);
-  static const Color textLight = Color(0xFFBDBDBD);
+  // Text colors (for dark background)
+  static const Color textPrimary = Color(0xFFE5E7EB);   // gray-200
+  static const Color textSecondary = Color(0xFF9CA3AF); // gray-400
+  static const Color textLight = Color(0xFF6B7280);     // gray-500
   
-  // Status colors
-  static const Color successColor = Color(0xFF4CAF50);
-  static const Color warningColor = Color(0xFFFF9800);
-  static const Color errorColor = Color(0xFFF44336);
-  static const Color infoColor = Color(0xFF2196F3);
+  // Status colors (softened)
+  static const Color successColor = Color(0xFF22C55E); // green-500
+  static const Color warningColor = Color(0xFFF59E0B); // amber-500
+  static const Color errorColor   = Color(0xFFEF4444); // red-500
+  static const Color infoColor    = Color(0xFF3B82F6); // blue-500
   
-  // Gradient colors
+  // Gradients (subtle)
   static const LinearGradient primaryGradient = LinearGradient(
-    colors: [primaryColor, secondaryColor],
+    colors: [primaryColor, accentColor],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );

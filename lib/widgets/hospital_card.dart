@@ -15,17 +15,7 @@ class HospitalCard extends StatelessWidget {
     this.onDirectionsPressed,
   });
 
-  Future<void> _launchPhone(String phone) async {
-    final url = 'tel:$phone';
-    final uri = Uri.parse(url);
-    
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } else {
-      // Show error message if phone app can't be launched
-      debugPrint('Could not launch phone app');
-    }
-  }
+
 
   Future<void> _launchDirections(double lat, double lon) async {
     try {
@@ -129,10 +119,6 @@ class HospitalCard extends StatelessWidget {
     final distance = hospital['distance'] as double;
     final km = (distance / 1000).toStringAsFixed(1);
     final name = hospital['tags']?['name'] ?? 'Unnamed Hospital';
-    final phone = hospital['tags']?['phone'] ?? 
-                hospital['tags']?['contact:phone'];
-    final email = hospital['tags']?['contact:email'] ?? 'No email available';
-    final website = hospital['tags']?['website'] ?? 'No website available';
     
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -172,101 +158,6 @@ class HospitalCard extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-          
-          const SizedBox(height: 12),
-          
-          // Contact Information Section
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppTheme.bgGlassMedium,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: AppTheme.textSecondary.withOpacity(0.2),
-                width: 1,
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Phone Number
-                if (phone != null) ...[
-                  Row(
-                    children: [
-                      const Icon(
-                        FeatherIcons.phone,
-                        size: 14,
-                        color: AppTheme.textSecondary,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () => _launchPhone(phone),
-                          child: Text(
-                            phone,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              color: AppTheme.textSecondary,
-                              decoration: TextDecoration.underline,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                
-                // Email
-                Row(
-                  children: [
-                    const Icon(
-                      FeatherIcons.mail,
-                      size: 14,
-                      color: AppTheme.textSecondary,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        email,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: AppTheme.textSecondary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-                
-                // Website
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const Icon(
-                      FeatherIcons.globe,
-                      size: 14,
-                      color: AppTheme.textSecondary,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        website,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: AppTheme.textSecondary,
-                          decoration: TextDecoration.underline,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
           ),
           
           const SizedBox(height: 16),
