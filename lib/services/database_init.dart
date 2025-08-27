@@ -41,6 +41,72 @@ class DatabaseService {
         });
       }, 'appointments collection');
       
+      // Initialize new collections for elderly features
+      await _safeFirestoreOperation(() async {
+        await _firestore.collection('community_posts').doc('init').set({
+          'initialized': true,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }, 'community_posts collection');
+      
+      await _safeFirestoreOperation(() async {
+        await _firestore.collection('health_habits').doc('init').set({
+          'initialized': true,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }, 'health_habits collection');
+      
+      await _safeFirestoreOperation(() async {
+        await _firestore.collection('habit_badges').doc('init').set({
+          'initialized': true,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }, 'habit_badges collection');
+      
+      await _safeFirestoreOperation(() async {
+        await _firestore.collection('sleep_fall_detection').doc('init').set({
+          'initialized': true,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }, 'sleep_fall_detection collection');
+      
+
+      
+      await _safeFirestoreOperation(() async {
+        await _firestore.collection('community_comments').doc('init').set({
+          'initialized': true,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }, 'community_comments collection');
+      
+      await _safeFirestoreOperation(() async {
+        await _firestore.collection('direct_messages').doc('init').set({
+          'initialized': true,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }, 'direct_messages collection');
+      
+      await _safeFirestoreOperation(() async {
+        await _firestore.collection('chat_conversations').doc('init').set({
+          'initialized': true,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }, 'chat_conversations collection');
+      
+      await _safeFirestoreOperation(() async {
+        await _firestore.collection('user_profiles').doc('init').set({
+          'initialized': true,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }, 'user_profiles collection');
+      
+      await _safeFirestoreOperation(() async {
+        await _firestore.collection('reported_content').doc('init').set({
+          'initialized': true,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }, 'reported_content collection');
+      
       debugPrint('✅ Database initialized successfully');
     } catch (e) {
       debugPrint('⚠️ Error initializing database: $e');

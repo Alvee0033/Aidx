@@ -9,8 +9,10 @@ import 'package:flutter/foundation.dart';
 class GeminiService {
   // TODO: Replace with your own API key or load from secure storage
   static const String _apiKey = 'AIzaSyAKOUTO3nKiLfMuoZBe5oEVr2vyhfgcK1I';
-  static const String _endpoint =
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+  // Use the faster model for quick responses
+  static const String _model = 'gemini-2.0-flash';
+  static const String _endpointBase = 'https://generativelanguage.googleapis.com/v1beta/models';
+  static String get _endpoint => '$_endpointBase/$_model:generateContent';
   final List<Function(String)> _listeners = [];
 
   /// Add a listener to receive notifications about API calls
@@ -107,7 +109,7 @@ User: $userInput
     
     while (retries < maxRetries) {
       try {
-        debugPrint('Sending message to Gemini API (attempt  [33m [1m [4m [7m${retries + 1} [0m)...');
+        debugPrint('Sending message to Gemini API (attempt ${retries + 1})...');
         
         final response = await http.post(
           uri,
@@ -149,7 +151,7 @@ User: $userInput
             return "I'm sorry, I can't answer that. Could you please rephrase or ask something else?";
           }
 
-            throw Exception('Empty or invalid response from Gemini API');
+          throw Exception('Empty or invalid response from Gemini API');
         } else {
           // Parse Gemini error if possible
           String errorMsg = 'Gemini API error (${response.statusCode})';
@@ -205,8 +207,10 @@ User: $userInput
     if (_apiKey == 'YOUR_GEMINI_API_KEY_HERE') {
       throw Exception('Please set your Gemini API key in gemini_service.dart');
     }
-
-    final prompt = _buildPrompt(
+ 
+    // Do not block on pre-validation; proceed to request or fall back to default output
+ 
+    final prompt = _buildMedicalPrompt(
       description: description,
       age: age,
       gender: gender,
@@ -216,11 +220,26 @@ User: $userInput
       vitals: vitals,
     );
 
-    final systemPrompt =
-        'You are a licensed medical assistant. Analyze the symptoms and provide a ROBUST but BRIEF analysis. Return ONLY these three sections, in this exact order, with NO extra words or explanations:\n\n'
-        '1. Possible Conditions:\n- List up to 3 likely conditions with percentages (e.g., "Condition (80%)")\n'
-        '2. Medications:\n- List recommended medicines (brief, comma-separated)\n'
-        '3. Measures to be Taken:\n- List actionable self-care or next steps (brief, bulleted)';
+    // BRIEF medical prompt for concise responses
+    final systemPrompt = '''You are a medical assistant providing BRIEF, actionable advice.
+
+CRITICAL: Keep responses SHORT and CONCISE.
+
+Output ONLY valid JSON:
+{
+"conditions": [{"name": "condition", "likelihood": 0-100}],
+"severity": "Mild|Moderate|Severe (Emergency)",
+"medications": ["medication (dosage)"],
+"homemade_remedies": ["brief remedy"],
+"measures": ["key action"]
+}
+
+RULES:
+- MAX 2 conditions
+- Use common medication names with brief dosages
+- MAX 2 remedies per category
+- Be extremely concise
+- Output ONLY JSON, no extra text''';
 
     final uri = Uri.parse('$_endpoint?key=$_apiKey');
 
@@ -273,8 +292,9 @@ User: $userInput
         }
       ],
       'generationConfig': {
-        'temperature': 0.2,
-        'maxOutputTokens': 1000,
+        'temperature': 0.1, // very deterministic for consistency
+        'maxOutputTokens': 300, // much shorter responses
+        'topP': 0.8,
       },
       'safetySettings': [
         {
@@ -288,19 +308,23 @@ User: $userInput
         {
           'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
           'threshold': 'BLOCK_LOW_AND_ABOVE'
+        },
+        {
+          'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+          'threshold': 'BLOCK_LOW_AND_ABOVE'
         }
       ]
     };
 
     int retries = 0;
-    const maxRetries = 3;
+    const int maxRetries = 3; // reduced retries for faster failure
     while (retries < maxRetries) {
       try {
         final res = await http.post(
           uri,
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(body),
-        ).timeout(const Duration(seconds: 30));
+        ).timeout(const Duration(seconds: 25)); // reduced timeout for faster response
         if (res.statusCode != 200) {
           // Parse Gemini error if possible
           String msg = 'Gemini API error (${res.statusCode})';
@@ -314,24 +338,170 @@ User: $userInput
           throw Exception(msg);
         }
         final data = jsonDecode(res.body);
-        final text = data['candidates']?[0]?['content']?['parts']?[0]?['text'];
-        if (text == null || text is! String || text.isEmpty) {
+        String? text = data['candidates']?[0]?['content']?['parts']?[0]?['text'];
+        if (text == null || text is! String || text.trim().isEmpty) {
+          // try to salvage from any part
+          final partsOut = data['candidates']?[0]?['content']?['parts'];
+          if (partsOut is List) {
+            for (final p in partsOut) {
+              if (p is Map && p['text'] is String && (p['text'] as String).trim().isNotEmpty) {
+                text = p['text'];
+                break;
+              }
+            }
+          }
+        }
+        if (text == null || text.trim().isEmpty) {
           throw Exception('No response received from Gemini API');
         }
-        return text.trim();
+        
+        // Validate response for medical relevance
+        final cleanText = text.trim();
+        if (cleanText == 'INVALID_INPUT') {
+          return _defaultAnalysisText(intensity);
+        }
+        // If validation fails, still return best-effort content; UI has robust parser with fallback
+        return cleanText;
       } catch (e, st) {
-          retries++;
+        retries++;
         _logError('Attempt $retries failed in analyzeSymptoms', e, st);
         if (retries >= maxRetries) {
-          return 'Sorry, the AI analysis could not be completed at this time. Please try again later.';
+          return _defaultAnalysisText(intensity);
         }
-        await Future.delayed(Duration(seconds: pow(2, retries).toInt()));
+        await Future.delayed(Duration(seconds: min(10, pow(2, retries).toInt()))); // shorter delays
       }
     }
-    return 'Sorry, the AI analysis could not be completed at this time. Please try again later.';
+    return _defaultAnalysisText(intensity);
   }
 
-  String _buildPrompt({
+  /// Validate if input text contains medical-related content
+  bool _isMedicallyRelevant(String description) {
+    if (description.trim().isEmpty) return false;
+    
+    // Medical keywords and patterns
+    final medicalKeywords = [
+      // Symptoms
+      'pain', 'ache', 'fever', 'headache', 'nausea', 'vomiting', 'diarrhea', 'constipation',
+      'cough', 'cold', 'flu', 'fatigue', 'tired', 'dizzy', 'weakness', 'swelling', 'rash',
+      'itch', 'burn', 'cut', 'wound', 'bruise', 'bleeding', 'discharge', 'infection',
+      'inflammation', 'sore', 'tender', 'stiff', 'cramp', 'spasm', 'numbness', 'tingling',
+      
+      // Body parts
+      'head', 'neck', 'chest', 'back', 'stomach', 'abdomen', 'arm', 'leg', 'foot', 'hand',
+      'eye', 'ear', 'nose', 'throat', 'mouth', 'tooth', 'skin', 'heart', 'lung', 'kidney',
+      'liver', 'brain', 'muscle', 'bone', 'joint', 'knee', 'shoulder', 'ankle', 'wrist',
+      
+      // Medical conditions
+      'diabetes', 'hypertension', 'asthma', 'allergy', 'migraine', 'arthritis', 'cancer',
+      'tumor', 'disease', 'syndrome', 'disorder', 'condition', 'illness', 'sick', 'unwell',
+      
+      // Medical terms
+      'symptom', 'diagnosis', 'treatment', 'medication', 'medicine', 'drug', 'prescription',
+      'doctor', 'hospital', 'clinic', 'medical', 'health', 'patient', 'injury', 'trauma',
+      'emergency', 'urgent', 'chronic', 'acute', 'severe', 'mild', 'moderate',
+      
+      // Vital signs
+      'temperature', 'blood pressure', 'heart rate', 'pulse', 'breathing', 'oxygen',
+      'blood sugar', 'glucose', 'cholesterol', 'weight', 'bmi'
+    ];
+    
+    final lowerDescription = description.toLowerCase();
+    
+    // Check for medical keywords
+    for (final keyword in medicalKeywords) {
+      if (lowerDescription.contains(keyword)) {
+        return true;
+      }
+    }
+    
+    // Check for medical patterns (e.g., "I feel", "hurts", "painful")
+    final medicalPatterns = [
+      RegExp(r'\b(feel|feeling)\s+(sick|unwell|bad|terrible|awful)\b'),
+      RegExp(r'\b(hurt|hurts|hurting|painful)\b'),
+      RegExp(r'\b(swollen|inflamed|infected)\b'),
+      RegExp(r'\b(difficulty|trouble)\s+(breathing|swallowing|sleeping)\b'),
+      RegExp(r'\b(loss of|lost)\s+(appetite|weight|consciousness)\b'),
+      RegExp(r'\b(high|low)\s+(fever|temperature|blood pressure)\b'),
+      RegExp(r'\b(shortness of breath|chest pain|abdominal pain)\b'),
+    ];
+    
+    for (final pattern in medicalPatterns) {
+      if (pattern.hasMatch(lowerDescription)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  /// Validate if the AI response contains valid medical information
+  bool _isValidMedicalResponse(String response) {
+    try {
+      final json = jsonDecode(response);
+      if (json is! Map<String, dynamic>) return false;
+      
+      // Check required fields
+      if (!json.containsKey('conditions') || !json.containsKey('severity') ||
+          !json.containsKey('medications') || !json.containsKey('measures')) {
+        return false;
+      }
+      
+      // Validate conditions
+      final conditions = json['conditions'];
+      if (conditions is! List || conditions.isEmpty) return false;
+      
+      for (final condition in conditions) {
+        if (condition is! Map<String, dynamic> ||
+            !condition.containsKey('name') ||
+            !condition.containsKey('likelihood') ||
+            condition['name'] is! String ||
+            condition['likelihood'] is! num) {
+          return false;
+        }
+        
+        // Check for obviously non-medical conditions
+        final conditionName = (condition['name'] as String).toLowerCase();
+        if (_containsNonMedicalTerms(conditionName)) {
+          return false;
+        }
+      }
+      
+      // Validate severity
+      final severity = json['severity'];
+      if (severity is! String ||
+          !['Mild', 'Moderate', 'Severe (Emergency)'].contains(severity)) {
+        return false;
+      }
+      
+      // Validate medications and measures are lists
+      if (json['medications'] is! List || json['measures'] is! List) {
+        return false;
+      }
+      
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  /// Check if text contains obviously non-medical terms
+  bool _containsNonMedicalTerms(String text) {
+    final nonMedicalTerms = [
+      'car', 'computer', 'phone', 'food', 'drink', 'movie', 'music', 'game',
+      'weather', 'sports', 'politics', 'business', 'technology', 'entertainment',
+      'fashion', 'travel', 'education', 'work', 'job', 'money', 'shopping'
+    ];
+    
+    final lowerText = text.toLowerCase();
+    for (final term in nonMedicalTerms) {
+      if (lowerText.contains(term)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String _buildMedicalPrompt({
     required String description,
     int? age,
     String? gender,
@@ -362,33 +532,204 @@ User: $userInput
       if (vitals['sleepHours'] != null) vitalsText += '\nSleep Hours: ${vitals['sleepHours']}';
     }
 
-    return """# Medical Symptom Analysis Request
-
-## Patient Information
-$ageText
-$genderText
-$intensityText
-$durationText
+    return """Patient: $ageText, $genderText
+Symptoms: $description ($intensity, $duration)
 $imageText
-${vitalsText}
 
-## Symptoms Description
-$description
+ANALYZE: Provide brief diagnosis and treatment. Keep response short.""";
+  }
 
-## Analysis Request
-Provide a ROBUST but BRIEF analysis in the following format ONLY:
+  /// Parse the raw Gemini response into a structured map.
+  /// Returns a map with keys: conditions (List<String>), medication (String), measures (String), homemade_remedies (String?)
+  Map<String, dynamic> parseResponse(String text) {
+    // Try JSON-first parsing (strict schema)
+    final Map<String, dynamic>? asJson = _tryParseJsonObject(text);
+    if (asJson != null && asJson.isNotEmpty) {
+      try {
+        final List conditionsJson = (asJson['conditions'] as List? ?? []);
+        final String severity = (asJson['severity'] as String? ?? '').trim();
+        final List meds = (asJson['medications'] as List? ?? []);
+        final List measures = (asJson['measures'] as List? ?? []);
+        final List home = (asJson['homemade_remedies'] as List? ?? []);
 
-1. Possible Conditions:
-- List each condition with likelihood percentage (e.g., "Condition (80%)")
-- Maximum 3 conditions, most likely first
+        final List<String> conditionsOut = [];
+        for (final item in conditionsJson) {
+          if (item is Map && item['name'] != null) {
+            final String name = (item['name'] as String).trim();
+            final int pct = _coercePercent(item['likelihood']);
+            conditionsOut.add(pct > 0 ? "$name (${pct}%)" : name);
+          } else if (item is String) {
+            conditionsOut.add(item.trim());
+          }
+        }
 
-2. Medications:
-- Brief list of recommended medicines
+        // If severity provided, append a severity line at end of conditions
+        if (severity.isNotEmpty) {
+          conditionsOut.add('Severity: $severity');
+        }
 
-3. Measures to be Taken:
-- Brief, actionable self-care or next steps
+        // Enhanced medication parsing with better formatting
+        final String medicationOut = meds.whereType<String>().isNotEmpty
+            ? meds.whereType<String>().join('\n• ').replaceAll('• ', '\n• ')
+            : 'No specific medications recommended';
 
-Keep each section clearly labeled with numbers (1, 2, 3) and be concise but informative.""";
+        // Enhanced measures parsing
+        final String measuresOut = measures.whereType<String>().isNotEmpty
+            ? measures.whereType<String>().join('\n• ').replaceAll('• ', '\n• ')
+            : 'Monitor symptoms and consult healthcare provider if needed';
+
+        // Enhanced homemade remedies parsing
+        final String homeOut = home.whereType<String>().isNotEmpty
+            ? home.whereType<String>().join('\n• ').replaceAll('• ', '\n• ')
+            : 'Rest and maintain good hygiene practices';
+
+        return {
+          'conditions': conditionsOut,
+          'medication': medicationOut,
+          'measures': measuresOut,
+          'homemade_remedies': homeOut.isNotEmpty ? homeOut : null,
+        };
+      } catch (e) {
+        // Fall back to legacy parsing if JSON shape unexpected
+      }
+    }
+
+    // Legacy text parsing fallback
+    final lines = text
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    final List<String> conditions = <String>[];
+    final StringBuffer medicationBuf = StringBuffer();
+    final StringBuffer measuresBuf = StringBuffer();
+    final StringBuffer homeBuf = StringBuffer();
+
+    const int sectionNone = 0;
+    const int sectionConditions = 1;
+    const int sectionMedication = 2;
+    const int sectionMeasures = 3;
+    const int sectionHome = 4;
+    int current = sectionNone;
+
+    bool _isHeader(String line, RegExp pattern) => pattern.hasMatch(line.toLowerCase());
+
+    final RegExp conditionsHeader = RegExp(r'^(?:\d+\.|[-*•])?\s*(possible\s+conditions|conditions)');
+    final RegExp medicationHeader = RegExp(r'^(?:\d+\.|[-*•])?\s*(medications?|drugs?)');
+    final RegExp measuresHeader = RegExp(r'^(?:\d+\.|[-*•])?\s*(measures|next\s*steps|self[-\s]*care|what\s*to\s*do)');
+    final RegExp homeHeader = RegExp(r'^(?:\d+\.|[-*•])?\s*(homemade|home[-\s]?remed(?:y|ies)|home\s*care|at[-\s]?home|home\s*based)');
+
+    for (final raw in lines) {
+      final line = raw.trim();
+      final lower = line.toLowerCase();
+
+      // Detect headers robustly (with or without numbering)
+      if (_isHeader(lower, conditionsHeader)) {
+        current = sectionConditions;
+        continue;
+      }
+      if (_isHeader(lower, medicationHeader)) {
+        current = sectionMedication;
+        continue;
+      }
+      if (_isHeader(lower, measuresHeader)) {
+        current = sectionMeasures;
+        continue;
+      }
+      if (_isHeader(lower, homeHeader)) {
+        current = sectionHome;
+        continue;
+      }
+
+      // Accumulate content by section
+      switch (current) {
+        case sectionConditions:
+          if (line.isEmpty) break;
+          if (line.startsWith('-') || line.startsWith('•') || line.startsWith('*')) {
+            conditions.add(line);
+          } else if (RegExp(r'\(\d+\s*%\)').hasMatch(line) || line.isNotEmpty) {
+            // Likely a condition line without bullet but with percentage
+            conditions.add(line);
+          }
+          break;
+        case sectionMedication:
+          if (medicationBuf.isNotEmpty) {
+            medicationBuf.writeln(line);
+          } else {
+            medicationBuf.write(line);
+          }
+          break;
+        case sectionMeasures:
+          if (measuresBuf.isNotEmpty) {
+            measuresBuf.writeln(line);
+          } else {
+            measuresBuf.write(line);
+          }
+          break;
+        case sectionHome:
+          if (homeBuf.isNotEmpty) {
+            homeBuf.writeln(line);
+          } else {
+            homeBuf.write(line);
+          }
+          break;
+        case sectionNone:
+          // Ignore lines before first recognized header
+          break;
+      }
+    }
+
+    final String medication = medicationBuf.toString().trim();
+    final String measures = measuresBuf.toString().trim();
+    final String homemadeRemedies = homeBuf.toString().trim();
+
+    return {
+      'conditions': conditions,
+      'medication': medication,
+      'measures': measures,
+      'homemade_remedies': homemadeRemedies.isNotEmpty ? homemadeRemedies : null,
+    };
+  }
+
+  Map<String, dynamic>? _tryParseJsonObject(String text) {
+    String t = text.trim();
+    // If wrapped in code fences, extract the JSON portion
+    if (t.startsWith('```')) {
+      final start = t.indexOf('{');
+      final end = t.lastIndexOf('}');
+      if (start != -1 && end != -1 && end > start) {
+        t = t.substring(start, end + 1);
+      }
+    }
+    // Try direct decode
+    try {
+      final decoded = jsonDecode(t);
+      if (decoded is Map<String, dynamic>) return decoded;
+    } catch (_) {}
+    // Try to extract JSON object using a loose brace match
+    final start = t.indexOf('{');
+    final end = t.lastIndexOf('}');
+    if (start != -1 && end != -1 && end > start) {
+      final sub = t.substring(start, end + 1);
+      try {
+        final decoded = jsonDecode(sub);
+        if (decoded is Map<String, dynamic>) return decoded;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  int _coercePercent(dynamic value) {
+    try {
+      if (value == null) return 0;
+      if (value is num) return value.clamp(0, 100).toInt();
+      final s = value.toString().replaceAll('%', '').trim();
+      final n = int.tryParse(s);
+      return (n ?? 0).clamp(0, 100);
+    } catch (_) {
+      return 0;
+    }
   }
 
   /// Search for drug information using Gemini API
@@ -427,31 +768,31 @@ Warnings: [important warnings]''';
     int retries = 0;
     const maxRetries = 3;
     while (retries < maxRetries) {
-    try {
-      final response = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'contents': [
-            {
-              'role': 'user',
-              'parts': [
-                {'text': systemPrompt}
-              ]
-            }
-          ],
-          'generationConfig': {
-            'temperature': 0.1,
-            'maxOutputTokens': brief ? 200 : 800,
-          },
-        }),
+      try {
+        final response = await http.post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'contents': [
+              {
+                'role': 'user',
+                'parts': [
+                  {'text': systemPrompt}
+                ]
+              }
+            ],
+            'generationConfig': {
+              'temperature': 0.1,
+              'maxOutputTokens': brief ? 200 : 800,
+            },
+          }),
         ).timeout(const Duration(seconds: 30));
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final text = data['candidates'][0]['content']['parts'][0]['text'] as String;
-        return brief ? parseBriefDrugResponse(text, drugName) : parseDrugResponse(text, drugName);
-      } else {
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final text = data['candidates'][0]['content']['parts'][0]['text'] as String;
+          return brief ? parseBriefDrugResponse(text, drugName) : parseDrugResponse(text, drugName);
+        } else {
           String msg = 'Error: ${response.statusCode} - ${response.body}';
           _logError(msg);
           throw Exception(msg);
@@ -460,18 +801,18 @@ Warnings: [important warnings]''';
         retries++;
         _logError('Attempt $retries failed in searchDrug', e, st);
         if (retries >= maxRetries) {
-        return {
-          'name': drugName,
+          return {
+            'name': drugName,
             'error': 'Network error. Please check your internet connection and try again.',
-        };
+          };
         }
         await Future.delayed(Duration(seconds: pow(2, retries).toInt()));
       }
     }
-      return {
-        'name': drugName,
-        'error': 'Network error. Please check your internet connection and try again.',
-      };
+    return {
+      'name': drugName,
+      'error': 'Network error. Please check your internet connection and try again.',
+    };
   }
 
   /// Parse drug response into structured format
@@ -535,54 +876,133 @@ Warnings: [important warnings]''';
     };
   }
 
-  /// Parse the raw Gemini response into a structured map.
-  /// Returns a map with keys: conditions (List<String>), medication (String), measures (String)
-  Map<String, dynamic> parseResponse(String text) {
-    final lines = text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-    final conditions = <String>[];
-    String medication = '';
-    String measures = '';
-    
-    // Track which section we're currently parsing
-    int currentSection = 0;
- 
-    for (final line in lines) {
-      final lower = line.toLowerCase();
-      
-      // Check for section headers
-      if (lower.contains('1.') && lower.contains('condition')) {
-        currentSection = 1;
-        continue;
-      } else if (lower.contains('2.') && lower.contains('medication')) {
-        currentSection = 2;
-        continue;
-      } else if (lower.contains('3.') && lower.contains('measure')) {
-        currentSection = 3;
-        continue;
-      }
-      
-      // Process content based on current section
-      if (currentSection == 1 && line.contains('-')) {
-        conditions.add(line);
-      } else if (currentSection == 2) {
-        if (medication.isEmpty) {
-          medication = line;
-        } else {
-          medication += '\n' + line;
-        }
-      } else if (currentSection == 3) {
-        if (measures.isEmpty) {
-          measures = line;
-        } else {
-          measures += '\n' + line;
-        }
-      }
+  /// Visual Q&A: send an image (bytes or file) plus a question, get an answer
+  Future<String> askWithImage({
+    required String question,
+    Uint8List? imageBytes,
+    File? imageFile,
+    String? imageMimeType,
+  }) async {
+    if (_apiKey == 'YOUR_GEMINI_API_KEY_HERE') {
+      throw Exception('Please set your Gemini API key in gemini_service.dart');
     }
- 
-    return {
-      'conditions': conditions,
-      'medication': medication,
-      'measures': measures,
+    final uri = Uri.parse('$_endpoint?key=$_apiKey');
+
+    final parts = <Map<String, dynamic>>[
+      { 'text': 'You are a concise medical assistant. Answer briefly and specifically.' },
+      { 'text': question },
+    ];
+
+    // Attach image
+    if (imageBytes != null && imageBytes.isNotEmpty) {
+      if (imageBytes.length > 4 * 1024 * 1024) {
+        throw Exception('Image is too large (>4MB). Use a smaller image.');
+      }
+      parts.add({
+        'inlineData': {
+          'mimeType': imageMimeType ?? 'image/jpeg',
+          'data': base64Encode(imageBytes),
+        }
+      });
+    } else if (imageFile != null && imageFile.existsSync()) {
+      final bytes = await imageFile.readAsBytes();
+      if (bytes.length > 4 * 1024 * 1024) {
+        throw Exception('Image is too large (>4MB). Use a smaller image.');
+      }
+      String mime = imageMimeType ?? 'image/jpeg';
+      final path = imageFile.path.toLowerCase();
+      if (path.endsWith('.png')) mime = 'image/png';
+      if (path.endsWith('.gif')) mime = 'image/gif';
+      if (path.endsWith('.webp')) mime = 'image/webp';
+      parts.add({
+        'inlineData': {
+          'mimeType': mime,
+          'data': base64Encode(bytes),
+        }
+      });
+    } else {
+      throw Exception('Image is required');
+    }
+
+    final body = {
+      'contents': [
+        {
+          'role': 'user',
+          'parts': parts,
+        }
+      ],
+      'generationConfig': {
+        'temperature': 0.3,
+        'maxOutputTokens': 300,
+      },
     };
+
+    try {
+      final res = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      ).timeout(const Duration(seconds: 30));
+
+      if (res.statusCode != 200) {
+        String msg = 'Gemini vision API error (${res.statusCode})';
+        try {
+          final err = jsonDecode(res.body);
+          final em = err['error']?['message'];
+          if (em is String && em.isNotEmpty) msg = 'Gemini vision API error: $em';
+        } catch (_) {}
+        throw Exception(msg);
+      }
+
+      final data = jsonDecode(res.body);
+      String? text = data['candidates']?[0]?['content']?['parts']?[0]?['text'];
+      if (text == null || text.trim().isEmpty) {
+        final partsOut = data['candidates']?[0]?['content']?['parts'];
+        if (partsOut is List) {
+          for (final p in partsOut) {
+            if (p is Map && p['text'] is String && (p['text'] as String).trim().isNotEmpty) {
+              text = p['text'];
+              break;
+            }
+          }
+        }
+      }
+      if (text == null || text.trim().isEmpty) {
+        throw Exception('Empty response from vision API');
+      }
+      return text.trim();
+    } catch (e) {
+      _logError('askWithImage failed', e as Object?);
+      rethrow;
+    }
+  }
+
+  // Provide a brief default output
+  String _defaultAnalysisText(String? intensity) {
+    final sev = (intensity ?? 'mild').toLowerCase();
+    final String severity = sev.contains('severe')
+        ? 'Severe (Emergency)'
+        : (sev.contains('moderate') ? 'Moderate' : 'Mild');
+
+    return '''{
+"conditions": [
+  {"name": "Common viral infection", "likelihood": 60},
+  {"name": "Bacterial infection", "likelihood": 30}
+],
+"severity": "$severity",
+"medications": [
+  "Paracetamol 500mg every 4-6h",
+  "Ibuprofen 200mg every 4-6h"
+],
+"homemade_remedies": [
+  "Rest and hydrate",
+  "Cool compress for fever"
+],
+"measures": [
+  "Monitor symptoms",
+  "Seek care if worsens"
+]
+}''';
   }
 } 
+

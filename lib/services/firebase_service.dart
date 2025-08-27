@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'dart:async' show unawaited;
 
 class FirebaseService extends ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -17,6 +18,63 @@ class FirebaseService extends ChangeNotifier {
   static const String pharmaciesCollection = 'pharmacies';
   static const String wearableDataCollection = 'wearable_data';
   static const String emergencyContactsCollection = 'emergency_contacts';
+
+  // Create Firestore indexes to prevent preconditions errors
+  Future<void> createFirestoreIndexes() async {
+    try {
+      // Create indexes for medications collection
+      await _firestore.collection(medicationsCollection).doc('indexes').set({
+        'userId_index': true,
+        'userId_isActive_index': true,
+        'createdAt_index': true,
+        'timestamp': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // Create indexes for reminders collection
+      await _firestore.collection(remindersCollection).doc('indexes').set({
+        'userId_index': true,
+        'userId_isActive_index': true,
+        'dateTime_index': true,
+        'timestamp': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      debugPrint('✅ Firestore indexes created successfully');
+    } catch (e) {
+      debugPrint('⚠️ Error creating Firestore indexes: $e');
+      // Don't throw here, as this is not critical for app functionality
+    }
+  }
+
+  // Initialize Firestore collections
+  Future<void> initializeCollections() async {
+    try {
+      // Create Firestore indexes first
+      await createFirestoreIndexes();
+      
+      // Create a dummy document in each collection to ensure they exist
+      final collections = [
+        medicationsCollection,
+        remindersCollection,
+        appointmentsCollection,
+        symptomsCollection,
+        healthDataCollection,
+      ];
+
+      for (final collection in collections) {
+        try {
+          await _firestore.collection(collection).doc('init').set({
+            'initialized': true,
+            'timestamp': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+          debugPrint('✅ Initialized collection: $collection');
+        } catch (e) {
+          debugPrint('⚠️ Error initializing collection $collection: $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error initializing collections: $e');
+    }
+  }
 
   // Get current user
   User? get currentUser => _auth.currentUser;
@@ -82,6 +140,44 @@ class FirebaseService extends ChangeNotifier {
   }
 
   // Health Data Management
+  // New: Latest vitals document per user at collection `health_data` with fields
+  // heart_rate (int), spo2 (int), blood_pressure (string "SYS/DIA"), timestamp (server)
+  Future<void> setLatestVitals({
+    required String userId,
+    required int? heartRate,
+    required int? spo2,
+    required String? bloodPressure,
+    String source = 'wearable',
+  }) async {
+    try {
+      await _firestore.collection(healthDataCollection).doc(userId).set({
+        'userId': userId,
+        'heart_rate': heartRate,
+        'spo2': spo2,
+        'blood_pressure': bloodPressure,
+        'timestamp': FieldValue.serverTimestamp(),
+        'source': source,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Error writing latest vitals: $e');
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getLatestVitalsOnce(String userId) async {
+    try {
+      final doc = await _firestore.collection(healthDataCollection).doc(userId).get();
+      return doc.data();
+    } catch (e) {
+      debugPrint('Error fetching latest vitals: $e');
+      return null;
+    }
+  }
+
+  Stream<DocumentSnapshot<Map<String, dynamic>>> getLatestVitalsStream(String userId) {
+    return _firestore.collection(healthDataCollection).doc(userId).snapshots();
+  }
+
   Future<void> addHealthData(String userId, Map<String, dynamic> healthData) async {
     await _firestore.collection(healthDataCollection).add({
       'userId': userId,
@@ -126,12 +222,40 @@ class FirebaseService extends ChangeNotifier {
   }
 
   Stream<QuerySnapshot> getMedicationsStream(String userId) {
-    return _firestore
-        .collection(medicationsCollection)
-        .where('userId', isEqualTo: userId)
-        .where('isActive', isEqualTo: true)
-        .orderBy('createdAt', descending: true)
-        .snapshots();
+    try {
+      return _firestore
+          .collection(medicationsCollection)
+          .where('userId', isEqualTo: userId)
+          .snapshots();
+    } catch (e) {
+      debugPrint('Error in getMedicationsStream: $e');
+      return Stream.empty();
+    }
+  }
+
+  // Alternative method for getting medications without ordering
+  Stream<QuerySnapshot> getMedicationsStreamSimple(String userId) {
+    try {
+      return _firestore
+          .collection(medicationsCollection)
+          .where('userId', isEqualTo: userId)
+          .snapshots();
+    } catch (e) {
+      debugPrint('Error in getMedicationsStreamSimple: $e');
+      return Stream.empty();
+    }
+  }
+
+  // Get medications without any filters (most basic method)
+  Stream<QuerySnapshot> getMedicationsStreamBasic(String userId) {
+    try {
+      return _firestore
+          .collection(medicationsCollection)
+          .snapshots();
+    } catch (e) {
+      debugPrint('Error in getMedicationsStreamBasic: $e');
+      return Stream.empty();
+    }
   }
 
   Future<void> updateMedication(String medicationId, Map<String, dynamic> updates) async {
@@ -184,12 +308,27 @@ class FirebaseService extends ChangeNotifier {
   }
 
   Stream<QuerySnapshot> getRemindersStream(String userId) {
-    return _firestore
-        .collection(remindersCollection)
-        .where('userId', isEqualTo: userId)
-        .where('isActive', isEqualTo: true)
-        .orderBy('dateTime', descending: false)
-        .snapshots();
+    try {
+      return _firestore
+          .collection(remindersCollection)
+          .where('userId', isEqualTo: userId)
+          .snapshots();
+    } catch (e) {
+      debugPrint('Error in getRemindersStream: $e');
+      return Stream.empty();
+    }
+  }
+
+  // Get reminders without any filters (fallback method)
+  Stream<QuerySnapshot> getRemindersStreamBasic(String userId) {
+    try {
+      return _firestore
+          .collection(remindersCollection)
+          .snapshots();
+    } catch (e) {
+      debugPrint('Error in getRemindersStreamBasic: $e');
+      return Stream.empty();
+    }
   }
 
   Future<void> updateReminder(String reminderId, Map<String, dynamic> updates) async {
@@ -523,25 +662,71 @@ class FirebaseService extends ChangeNotifier {
 
   // Symptom record management (for AI analysis)
   Future<void> saveSymptomRecord(String userId, Map<String, dynamic> recordData) async {
-    await _firestore.collection('users').doc(userId).collection('symptomRecords').add({
+    await _firestore.collection(symptomsCollection).add({
       ...recordData,
       'createdAt': FieldValue.serverTimestamp(),
     });
   }
 
   Future<List<Map<String, dynamic>>> getSymptomHistory(String userId) async {
-    final snapshot = await _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('symptomRecords')
+    print('🔍 Retrieving symptom history for user: $userId');
+    final query = _firestore
+        .collection(symptomsCollection)
+        .where('userId', isEqualTo: userId)
         .orderBy('timestamp', descending: true)
-        .limit(50)
-        .get();
-    
-    return snapshot.docs.map((doc) => {
-      'id': doc.id,
-      ...doc.data(),
-    }).toList();
+        .limit(50);
+    try {
+      // Try cache first for instant UI
+      try {
+        final cacheSnap = await query.get(const GetOptions(source: Source.cache));
+        print('📦 Cache query results: ${cacheSnap.docs.length} documents');
+        
+        if (cacheSnap.docs.isNotEmpty) {
+          // Refresh cache in background
+          unawaited(query.get());
+          final cacheResults = cacheSnap.docs.map((doc) => {
+            'id': doc.id,
+            ...doc.data(),
+          }).toList();
+          
+          print('✅ Returning ${cacheResults.length} records from cache');
+          return cacheResults;
+        }
+      } catch (cacheError) {
+        print('❌ Cache query error: $cacheError');
+      }
+      
+      // Fallback to server
+      print('🌐 Fetching symptom history from server');
+      final snapshot = await query.get();
+      
+      print('📊 Server query results: ${snapshot.docs.length} documents');
+      
+      final results = snapshot.docs.map((doc) => {
+        'id': doc.id,
+        ...doc.data(),
+      }).toList();
+      
+      if (results.isEmpty) {
+        print('⚠️ No symptom records found for user');
+      }
+      
+      return results;
+    } catch (e) {
+      print('❌ Comprehensive error retrieving symptom history: $e');
+      
+      // Additional error context
+      try {
+        final userDoc = await _firestore.collection('users').doc(userId).get();
+        if (!userDoc.exists) {
+          print('⚠️ User document does not exist');
+        }
+      } catch (userDocError) {
+        print('❌ Error checking user document: $userDocError');
+      }
+      
+      return []; // Return empty list on error
+    }
   }
 
   // Sign out

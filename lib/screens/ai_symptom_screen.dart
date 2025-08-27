@@ -15,6 +15,8 @@ import '../services/gemini_service.dart';
 import '../services/firebase_service.dart';
 import '../utils/theme.dart';
 import '../services/database_init.dart';
+import '../services/health_id_service.dart';
+import '../models/health_id_model.dart';
 
 class AISymptomScreen extends StatefulWidget {
   const AISymptomScreen({Key? key}) : super(key: key);
@@ -46,11 +48,16 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
   Uint8List? _imageBytes;
   String? _imageMimeType;
   bool _useLiveVitals = false;
+  bool _useHealthIdProfile = false;
+  HealthIdModel? _healthId;
+  bool _healthIdLoading = false;
 
   @override
   void initState() {
     super.initState();
+    print('🚀 AI Symptom Screen initialized');
     _loadHistory();
+    _loadHealthIdProfile();
   }
 
   @override
@@ -330,84 +337,179 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
   }
 
   Widget _buildDetailInputs() {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      alignment: WrapAlignment.start,
-                        children: [
-        _buildDropdown(
-                            value: _gender,
-                            items: const ["Male", "Female", "Other"],
-                            hint: "Gender",
-                            icon: Icons.person,
-                            onChanged: (v) => setState(() => _gender = v),
-                          ),
-        _buildDropdown(
-                            value: _intensity,
-                            items: const ["mild", "moderate", "severe"],
-                            hint: "Intensity",
-                            icon: Icons.bolt,
-                            onChanged: (v) => setState(() => _intensity = v ?? "mild"),
-                          ),
-        _buildDropdown(
-                            value: _duration,
-                            items: const ["<1d", "1-3d", "1w", ">1w"],
-                            hint: "Duration",
-                            icon: Icons.timer,
-                            onChanged: (v) => setState(() => _duration = v ?? "<1d"),
-                          ),
-        SizedBox(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Health ID Toggle
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.3),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppTheme.primaryColor.withOpacity(0.2)),
+          ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-                          SizedBox(
-          width: 80,
-                            child: TextField(
-                              controller: _ageController,
-                              keyboardType: TextInputType.number,
-                              style: const TextStyle(color: Colors.white, fontFamily: 'Montserrat'),
-                              decoration: InputDecoration(
-                                filled: true,
-                                fillColor: Colors.white.withOpacity(0.04),
-                                hintText: "Age",
-                                hintStyle: TextStyle(color: Colors.white.withOpacity(0.4), fontFamily: 'Montserrat'),
-                                border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                                  borderSide: BorderSide.none,
-                                ),
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                              ),
-                ),
+              Icon(
+                _healthId != null ? Icons.verified_user : Icons.person_off,
+                color: _useHealthIdProfile ? AppTheme.accentColor : Colors.white70,
+                size: 18,
               ),
               const SizedBox(width: 8),
-              Row(
-                children: [
-                  Switch(
-                    value: _useLiveVitals,
-                    onChanged: (val) {
-                      setState(() {
-                        _useLiveVitals = val;
-                      });
-                    },
-                    activeColor: AppTheme.primaryColor,
-                  ),
-                  const SizedBox(width: 2),
-                  Text(
-                    "Live Vitals",
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.85),
-                      fontSize: 13,
-                      fontFamily: 'Montserrat',
-                      fontWeight: FontWeight.w500,
+              Expanded(
+                child: Row(
+                  children: [
+                    Text(
+                      _healthIdLoading
+                          ? "Loading Health ID..."
+                          : (_healthId == null
+                              ? "Health ID not linked"
+                              : (_useHealthIdProfile ? "Using Health ID" : "Use Health ID")),
+                      style: TextStyle(
+                        color: _healthId == null
+                            ? Colors.white54
+                            : (_useHealthIdProfile ? Colors.white : Colors.white70),
+                        fontSize: 14,
+                        fontFamily: 'Montserrat',
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
-                ],
+                    if (_healthId != null && !_healthIdLoading) ...[
+                      const SizedBox(width: 8),
+                      Switch(
+                        value: _useHealthIdProfile,
+                        onChanged: (val) {
+                          setState(() {
+                            _useHealthIdProfile = val;
+                            // Refresh age display when toggle changes
+                            _refreshAgeDisplay();
+                          });
+                        },
+                        activeColor: AppTheme.accentColor,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ],
-                            ),
-                          ),
-                        ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Age and Gender fields (always visible, but indicate Health ID usage)
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          alignment: WrapAlignment.start,
+          children: [
+            _buildDropdown(
+              value: _gender,
+              items: const ["Male", "Female", "Other"],
+              hint: _useHealthIdProfile && _healthId != null ? "Gender (from Health ID)" : "Gender",
+              icon: Icons.person,
+              onChanged: (v) => setState(() => _gender = v),
+            ),
+            SizedBox(
+              width: 80,
+              child: TextField(
+                controller: _ageController,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(color: Colors.white, fontFamily: 'Montserrat'),
+                enabled: !(_useHealthIdProfile && _healthId != null && _healthId!.age != null && _healthId!.age!.isNotEmpty && int.tryParse(_healthId!.age!) != null),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: (_useHealthIdProfile && _healthId != null && _healthId!.age != null && _healthId!.age!.isNotEmpty && int.tryParse(_healthId!.age!) != null)
+                      ? Colors.green.withOpacity(0.1)
+                      : Colors.white.withOpacity(0.04),
+                  hintText: (_useHealthIdProfile && _healthId != null && _healthId!.age != null && _healthId!.age!.isNotEmpty && int.tryParse(_healthId!.age!) != null)
+                      ? "Age: ${_healthId!.age}"
+                      : "Age",
+                  hintStyle: TextStyle(
+                    color: (_useHealthIdProfile && _healthId != null && _healthId!.age != null && _healthId!.age!.isNotEmpty && int.tryParse(_healthId!.age!) != null)
+                        ? Colors.greenAccent.withOpacity(0.8)
+                        : Colors.white.withOpacity(0.4),
+                    fontFamily: 'Montserrat',
+                    fontStyle: (_useHealthIdProfile && _healthId != null && _healthId!.age != null && _healthId!.age!.isNotEmpty && int.tryParse(_healthId!.age!) != null) ? FontStyle.italic : FontStyle.normal,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide(
+                      color: (_useHealthIdProfile && _healthId != null && _healthId!.age != null && _healthId!.age!.isNotEmpty && int.tryParse(_healthId!.age!) != null)
+                          ? Colors.greenAccent.withOpacity(0.5)
+                          : Colors.transparent,
+                      width: 1,
+                    ),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (_useHealthIdProfile && _healthId != null && _healthId!.age != null && _healthId!.age!.isNotEmpty && int.tryParse(_healthId!.age!) != null) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              "✓ Using age ${_healthId!.age} from Health ID profile",
+              style: TextStyle(
+                color: Colors.greenAccent.withOpacity(0.8),
+                fontSize: 12,
+                fontFamily: 'Montserrat',
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+
+        // Always visible fields (intensity, duration, live vitals)
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          alignment: WrapAlignment.start,
+          children: [
+            _buildDropdown(
+              value: _intensity,
+              items: const ["mild", "moderate", "severe"],
+              hint: "Intensity",
+              icon: Icons.bolt,
+              onChanged: (v) => setState(() => _intensity = v ?? "mild"),
+            ),
+            _buildDropdown(
+              value: _duration,
+              items: const ["<1d", "1-3d", "1w", ">1w"],
+              hint: "Duration",
+              icon: Icons.timer,
+              onChanged: (v) => setState(() => _duration = v ?? "<1d"),
+            ),
+            Row(
+              children: [
+                Switch(
+                  value: _useLiveVitals,
+                  onChanged: (val) {
+                    setState(() {
+                      _useLiveVitals = val;
+                    });
+                  },
+                  activeColor: AppTheme.primaryColor,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  "Live Vitals",
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.85),
+                    fontSize: 13,
+                    fontFamily: 'Montserrat',
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -539,6 +641,38 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
     );
   }
 
+  bool _isSevereCondition(List conditions) {
+    if (conditions.isEmpty) return false;
+    final joined = conditions.join(' ').toLowerCase();
+
+    // Check if AI response explicitly indicates severe condition
+    if (joined.contains('severity: severe') || joined.contains('severe (emergency)')) {
+      return true;
+    }
+
+    // Define severe conditions that require immediate medical attention
+    const severeKeywords = [
+      'heart attack', 'myocardial infarction', 'stroke', 'kidney failure', 'renal failure',
+      'sepsis', 'anaphylaxis', 'pulmonary embolism', 'pe', 'aortic dissection',
+      'meningitis', 'intracranial hemorrhage', 'hemorrhage', 'gi bleed', 'diabetic ketoacidosis', 'dka',
+      'status asthmaticus', 'respiratory failure', 'acute liver failure', 'encephalitis',
+      'appendicitis with perforation', 'ectopic pregnancy', 'testicular torsion',
+      'acute coronary syndrome', 'acs', 'shock', 'cardiac arrest', 'cancer', 'tumor',
+      'pneumonia', 'tuberculosis', 'hiv', 'aids', 'hepatitis', 'cirrhosis',
+      'pancreatitis', 'peritonitis', 'osteomyelitis', 'endocarditis', 'myocarditis'
+    ];
+
+    for (final kw in severeKeywords) {
+      if (joined.contains(kw)) return true;
+    }
+
+    // Also check for high confidence with severe intensity
+    final hasHighPercent = RegExp(r'\(\s*(9[0-9]|100)\s*%\s*\)').hasMatch(joined);
+    if (hasHighPercent && _intensity.toLowerCase() == 'severe') return true;
+
+    return false;
+  }
+
   Widget _buildResultCard() {
     if (_isAnalyzing) {
       return Center(
@@ -559,6 +693,7 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
     }
 
     final conditions = (_analysisResult?["conditions"] as List?) ?? [];
+    final bool isSevere = _isSevereCondition(conditions);
 
     return Container(
                             decoration: BoxDecoration(
@@ -621,33 +756,25 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
                   ),
                   const SizedBox(height: 8),
                 ],
-                if (_analysisResult?["medication"] != null) ...[
-                  _buildResultSection(
-                    title: "2. Medications",
-                    icon: Icons.medication_outlined,
-                    content: Text(
-                      _analysisResult!["medication"],
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontFamily: 'Montserrat',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                if (_analysisResult?["measures"] != null)
-                  _buildResultSection(
-                    title: "3. Measures to be Taken",
-                    icon: Icons.healing,
-                    content: Text(
-                      _analysisResult!["measures"],
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontFamily: 'Montserrat',
-                      ),
-                  ),
+                                // Section 2: Medications (concise display)
+                _buildResultSection(
+                  title: "Medications",
+                  icon: Icons.medication_outlined,
+                  content: _buildMedicationContent(_analysisResult?["medication"] ?? ""),
+                ),
+                const SizedBox(height: 8),
+                // Section 3: Home Remedies (concise display)
+                _buildResultSection(
+                  title: "Home Remedies",
+                  icon: Icons.local_florist_outlined,
+                  content: _buildHomeRemedyContent(_analysisResult?["homemade_remedies"] ?? ""),
+                ),
+                const SizedBox(height: 8),
+                // Section 4: Actions (concise display)
+                _buildResultSection(
+                  title: "Actions",
+                  icon: Icons.healing,
+                  content: _buildMeasuresContent(_analysisResult?["measures"] ?? ""),
                 ),
                     ],
                   ),
@@ -797,6 +924,47 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
     );
   }
 
+  // Simplified content builders for concise display
+  Widget _buildMedicationContent(String medicationText) {
+    return Text(
+      medicationText.isEmpty ? "Paracetamol 500mg every 4-6h, Ibuprofen 200mg every 4-6h" : medicationText,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 14,
+        fontFamily: 'Montserrat',
+        height: 1.4,
+      ),
+    );
+  }
+
+  Widget _buildHomeRemedyContent(String remedyText) {
+    return Text(
+      remedyText.isEmpty ? "Rest, hydrate, cool compress for fever" : remedyText,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 14,
+        fontFamily: 'Montserrat',
+        height: 1.4,
+      ),
+    );
+  }
+
+  Widget _buildMeasuresContent(String measuresText) {
+    return Text(
+      measuresText.isEmpty ? "Monitor symptoms, seek care if worsens" : measuresText,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 14,
+        fontFamily: 'Montserrat',
+        height: 1.4,
+      ),
+    );
+  }
+
+
+
+
+
   Widget _buildResultTextSection(String title, String content) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -840,10 +1008,25 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
 
   Widget _buildHistoryView() {
     if (_historyLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text(
+              'Loading symptom history...',
+              style: TextStyle(
+                color: Colors.white70, 
+                fontFamily: 'Montserrat'
+              ),
+            ),
+          ],
+        ),
+      );
     }
     
-    if (_history.isEmpty) {
+        if (_history.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -852,22 +1035,50 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
             const SizedBox(height: 8),
             Text(
               "No symptom history yet",
-              style: TextStyle(color: Colors.white.withOpacity(0.7), fontFamily: 'Montserrat'),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.7),
+                fontFamily: 'Montserrat'
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _refreshHistory,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Refresh History'),
+              style: ElevatedButton.styleFrom(
+                foregroundColor: Colors.white,
+                backgroundColor: AppTheme.primaryColor.withOpacity(0.6),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "History will appear here after you analyze symptoms",
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.5),
+                fontFamily: 'Montserrat',
+                fontSize: 12,
+              ),
+              textAlign: TextAlign.center,
             ),
           ],
         ),
       );
     }
     
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _history.length,
-      itemBuilder: (context, index) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: _buildHistoryItem(_history[index]),
-        );
-      },
+    return RefreshIndicator(
+      onRefresh: _refreshHistory,
+      color: AppTheme.primaryColor,
+      backgroundColor: Colors.black,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _history.length,
+        itemBuilder: (context, index) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _buildHistoryItem(_history[index]),
+          );
+        },
+      ),
     );
   }
 
@@ -928,18 +1139,10 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
                       ),
                   ],
                 ),
-                  if (record['analysis'] != null && (record['analysis']['conditions'] as List).isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                    Text(
-                      "Conditions: " + (record['analysis']['conditions'] as List).join(', '),
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
-                        fontFamily: 'Montserrat',
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 2,
-                    ),
-                ],
+                  if (record['analysis'] != null) ...[
+                    const SizedBox(height: 8),
+                    _buildAnalysisSummary(record['analysis']),
+                  ],
               ],
             ),
           ),
@@ -949,7 +1152,182 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
     );
   }
 
+  Widget _buildAnalysisSummary(Map<String, dynamic> analysis) {
+    final List<String> summaryParts = [];
+
+    try {
+      // Handle conditions - can be List<String> or List<Map> with name/likelihood
+      if (analysis['conditions'] != null) {
+        final conditions = analysis['conditions'];
+        String conditionsText = '';
+
+        if (conditions is List) {
+          if (conditions.isNotEmpty && conditions.first is Map) {
+            // New format: [{"name": "...", "likelihood": 70}]
+            conditionsText = conditions.map((c) {
+              if (c is Map && c['name'] != null) {
+                final likelihood = c['likelihood'] ?? '';
+                return likelihood.isNotEmpty ? '${c['name']} (${likelihood}%)' : c['name'];
+              }
+              return c.toString();
+            }).join(', ');
+          } else {
+            // Old format: ["condition1", "condition2"]
+            conditionsText = conditions.join(', ');
+          }
+        } else if (conditions is String) {
+          conditionsText = conditions;
+        }
+
+        if (conditionsText.isNotEmpty) {
+          summaryParts.add("Conditions: $conditionsText");
+        }
+      }
+
+      // Handle medications
+      final meds = analysis['medication'] ?? analysis['medications'];
+      if (meds != null) {
+        String medsText = '';
+        if (meds is List) {
+          medsText = meds.join(', ');
+        } else if (meds is String) {
+          medsText = meds;
+        }
+        if (medsText.isNotEmpty) {
+          summaryParts.add("Medications: $medsText");
+        }
+      }
+
+      // Handle home remedies
+      if (analysis['homemade_remedies'] != null) {
+        final remedies = analysis['homemade_remedies'];
+        String remediesText = '';
+        if (remedies is List) {
+          remediesText = remedies.join(', ');
+        } else if (remedies is String) {
+          remediesText = remedies;
+        }
+        if (remediesText.isNotEmpty) {
+          summaryParts.add("Home Remedies: $remediesText");
+        }
+      }
+
+      // Handle measures/actions
+      final measures = analysis['measures'] ?? analysis['actions'];
+      if (measures != null) {
+        String measuresText = '';
+        if (measures is List) {
+          measuresText = measures.join(', ');
+        } else if (measures is String) {
+          measuresText = measures;
+        }
+        if (measuresText.isNotEmpty) {
+          summaryParts.add("Actions: $measuresText");
+        }
+      }
+
+      // Handle severity if not shown elsewhere
+      if (analysis['severity'] != null && !summaryParts.any((part) => part.contains('Severity'))) {
+        summaryParts.add("Severity: ${analysis['severity']}");
+      }
+
+    } catch (e) {
+      print('Error building analysis summary: $e');
+      summaryParts.add("Analysis data available");
+    }
+
+    if (summaryParts.isEmpty) {
+      return const Text(
+        "Analysis data available",
+        style: TextStyle(
+          color: Colors.white,
+          fontFamily: 'Montserrat',
+          fontSize: 13,
+        ),
+      );
+    }
+
+    return Text(
+      summaryParts.join('\n'),
+      style: const TextStyle(
+        color: Colors.white,
+        fontFamily: 'Montserrat',
+        fontSize: 13,
+        height: 1.3,
+      ),
+      overflow: TextOverflow.ellipsis,
+      maxLines: 4,
+    );
+  }
+
   // Logic methods
+  Future<void> _loadHealthIdProfile() async {
+    setState(() => _healthIdLoading = true);
+    try {
+      final svc = HealthIdService();
+      final profile = await svc.getHealthId();
+      if (!mounted) return;
+      print('Symptom Screen - Loaded Health ID: ${profile?.name}, Age: ${profile?.age}');
+      setState(() {
+        _healthId = profile;
+        _healthIdLoading = false;
+
+        // Pre-fill age from Health ID if available and valid
+        if (profile != null && profile.age != null && profile.age!.isNotEmpty) {
+          final ageInt = int.tryParse(profile.age!);
+          if (ageInt != null) {
+            _ageController.text = ageInt.toString();
+            print('Symptom Screen - Pre-filled age: $ageInt');
+          } else {
+            print('Symptom Screen - Could not parse age: ${profile.age}');
+          }
+        } else {
+          print('Symptom Screen - No age in Health ID profile');
+        }
+      });
+    } catch (e) {
+      print('Symptom Screen - Error loading Health ID: $e');
+      setState(() => _healthIdLoading = false);
+      // Silently ignore profile load errors
+    }
+  }
+
+  void _refreshAgeDisplay() {
+    // Update age field display based on Health ID toggle state
+    if (_useHealthIdProfile && _healthId != null && _healthId!.age != null && _healthId!.age!.isNotEmpty) {
+      final ageInt = int.tryParse(_healthId!.age!);
+      if (ageInt != null && ageInt > 0 && ageInt <= 150) {
+        // Valid age in Health ID, update the controller
+        _ageController.text = ageInt.toString();
+      }
+    }
+  }
+
+  String _appendPatientProfile(String baseDescription) {
+    if (_healthId == null || !_useHealthIdProfile) return baseDescription;
+    final profile = _healthId!;
+    final List<String> lines = [];
+    if ((profile.bloodGroup ?? '').trim().isNotEmpty) {
+      lines.add('Blood Group: ${profile.bloodGroup}');
+    }
+    if (profile.allergies.isNotEmpty) {
+      lines.add('Allergies: ${profile.allergies.join(', ')}');
+    }
+    if (profile.activeMedications.isNotEmpty) {
+      lines.add('Active Medications: ${profile.activeMedications.join(', ')}');
+    }
+    if ((profile.medicalConditions ?? '').trim().isNotEmpty) {
+      lines.add('Known Conditions: ${profile.medicalConditions}');
+    }
+    if ((profile.notes ?? '').trim().isNotEmpty) {
+      lines.add('Notes: ${profile.notes}');
+    }
+    if (lines.isEmpty) return baseDescription;
+    return baseDescription +
+        '\n\nPatient Profile (from Digital Health ID):\n' +
+        lines.join('\n');
+  }
+
   Future<void> _pickImage() async {
     try {
       // Show bottom sheet with options
@@ -1140,10 +1518,54 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
           vitals = await dbService.getLatestVitals(userId);
         }
       }
+
+      // Enrich description with patient profile from Digital Health ID for accuracy
+      final enrichedDesc = _appendPatientProfile(desc);
+
+      // Use health ID data if available and enabled, otherwise use manual inputs
+      int? analysisAge;
+      String? analysisGender;
+
+      // First try to get age from Health ID if enabled
+      if (_useHealthIdProfile && _healthId != null && _healthId!.age != null && _healthId!.age!.isNotEmpty) {
+        analysisAge = int.tryParse(_healthId!.age!.trim());
+        if (analysisAge != null && analysisAge > 0 && analysisAge <= 150) {
+          // Successfully parsed valid age from Health ID
+          print('Using Health ID age: $analysisAge');
+        } else {
+          // Invalid age in Health ID, fall back to manual input
+          print('Invalid Health ID age: ${_healthId!.age}, falling back to manual input');
+          analysisAge = int.tryParse(_ageController.text.trim());
+        }
+      } else {
+        // Health ID not enabled or no age data, use manual input
+        analysisAge = int.tryParse(_ageController.text.trim());
+      }
+
+      // Validate that age is provided and valid
+      if (analysisAge == null || analysisAge <= 0 || analysisAge > 150) {
+        setState(() => _isAnalyzing = false);
+        String errorMessage = 'Age field is required. ';
+        if (_useHealthIdProfile && _healthId != null) {
+          errorMessage += 'Please add a valid age to your Health ID profile or enter it manually.';
+        } else {
+          errorMessage += 'Please enter your age.';
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      analysisGender = _gender;
+
       final resText = await _geminiService.analyzeSymptoms(
-        description: desc,
-        age: int.tryParse(_ageController.text),
-        gender: _gender,
+        description: enrichedDesc,
+        age: analysisAge,
+        gender: analysisGender,
         intensity: _intensity,
         duration: _duration,
         imageAttached: _pickedImage != null,
@@ -1189,18 +1611,43 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
     }
   }
 
+
+
   Future<void> _saveRecord(String name, Map<String, dynamic> analysis) async {
     final firebaseService = FirebaseService();
     final user = firebaseService.currentUser;
     if (user != null) {
-      await firebaseService.saveSymptomRecord(user.uid, {
-        'name': name,
-        'analysis': analysis,
-        'severity': _intensity,
-        'duration': _duration,
-        'timestamp': FieldValue.serverTimestamp(),
-      });
-      _loadHistory();
+      try {
+        print('💾 Saving symptom record for user: ${user.uid}');
+        print('📝 Record data: name="$name", severity="$_intensity", duration="$_duration"');
+
+        final recordData = {
+          'userId': user.uid,
+          'name': name,
+          'analysis': analysis,
+          'severity': _intensity,
+          'duration': _duration,
+          'timestamp': FieldValue.serverTimestamp(),
+          'createdAt': FieldValue.serverTimestamp(),
+        };
+
+        await firebaseService.saveSymptomRecord(user.uid, recordData);
+        print('✅ Symptom record saved successfully');
+
+        // Add a small delay before loading history to ensure Firestore sync
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _loadHistory();
+      } catch (e) {
+        print('❌ Error saving symptom record: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving record: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } else {
+      print('⚠️ Cannot save record: User not logged in');
     }
   }
 
@@ -1208,17 +1655,74 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
     setState(() => _historyLoading = true);
     final firebaseService = FirebaseService();
     final user = firebaseService.currentUser;
+
     if (user != null) {
-      final hist = await firebaseService.getSymptomHistory(user.uid);
-      setState(() {
-        _history
-          ..clear()
-          ..addAll(hist);
-        _historyLoading = false;
-      });
+      try {
+        print('🔍 Loading symptom history for user: ${user.uid}');
+        final hist = await firebaseService.getSymptomHistory(user.uid);
+
+        print('📊 Loaded ${hist.length} symptom history records');
+
+        if (hist.isNotEmpty) {
+          print('📋 Sample record structure:');
+          print('   - Name: ${hist.first['name']}');
+          print('   - Timestamp: ${hist.first['timestamp']}');
+          print('   - Has analysis: ${hist.first['analysis'] != null}');
+          if (hist.first['analysis'] != null) {
+            print('   - Analysis keys: ${hist.first['analysis'].keys.join(', ')}');
+          }
+        } else {
+          print('ℹ️ No symptom history found for user');
+        }
+
+        if (mounted) {
+          setState(() {
+            _history
+              ..clear()
+              ..addAll(hist);
+            _historyLoading = false;
+          });
+        }
+        print('✅ History loaded and state updated');
+      } catch (e) {
+        print('❌ Error loading symptom history: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error loading symptom history: $e'),
+              backgroundColor: Colors.red,
+              action: SnackBarAction(
+                label: 'Retry',
+                onPressed: _loadHistory,
+              ),
+            ),
+          );
+          setState(() {
+            _history.clear();
+            _historyLoading = false;
+          });
+        }
+      }
     } else {
-      setState(() => _historyLoading = false);
+      print('⚠️ No user logged in, cannot load symptom history');
+      if (mounted) {
+        setState(() {
+          _history.clear();
+          _historyLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please log in to view symptom history'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
     }
+  }
+
+  // Add a method to manually refresh history
+  Future<void> _refreshHistory() async {
+    await _loadHistory();
   }
 
   void _logout() async {

@@ -15,6 +15,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:aidx/services/sos_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class SosScreen extends StatefulWidget {
   const SosScreen({super.key});
@@ -27,8 +29,12 @@ class _SosScreenState extends State<SosScreen> {
   bool _isLoading = false;
   bool _autoSosEnabled = false;
   bool _sosActive = false;
+  late SosService _sosService;
+  bool _isInitializing = false;
+  bool _isDisposed = false;
   int _countdownSeconds = 30;
   Timer? _countdownTimer;
+  bool _autoDialed = false;
   
   // Firebase services
   late FirebaseService _firebaseService;
@@ -63,34 +69,103 @@ class _SosScreenState extends State<SosScreen> {
   void initState() {
     super.initState();
     _firebaseService = FirebaseService();
+    _sosService = SosService();
     _currentUserId = FirebaseAuth.instance.currentUser?.uid;
     _initializeData();
 
     // Listen for auth changes
     _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
-      if (user?.uid != _currentUserId) {
+      if (!_isDisposed && user?.uid != _currentUserId) {
         setState(() {
           _currentUserId = user?.uid;
         });
-    _initializeData();
+        // Only reinitialize if we have a new user and not disposed and not already initializing
+        if (user?.uid != null && !_isDisposed && !_isInitializing) {
+          _initializeData();
+        }
       }
     });
+
+    // Check global SOS status periodically and keep UI in sync
+    Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || _isDisposed) {
+        timer.cancel();
+        return;
+      }
+
+      final bool serviceActive = _sosService.isSOSActive;
+      if (serviceActive) {
+        // Ensure UI is active and keep seconds updated every tick
+        if (!_sosActive || _countdownSeconds != _sosService.countdownSeconds) {
+          setState(() {
+            _sosActive = true;
+            _countdownSeconds = _sosService.countdownSeconds;
+          });
+        }
+        // Auto-dial once when countdown reaches 0
+        if (_countdownSeconds == 0 && !_autoDialed) {
+          _autoDialed = true;
+          // Trigger the full emergency response
+          unawaited(_dispatchEmergency());
+        }
+      } else if (_sosActive) {
+        // Service ended or cancelled; reset UI
+        setState(() {
+          _sosActive = false;
+          _countdownSeconds = 30;
+          _autoDialed = false;
+        });
+      }
+    });
+
+    // Auto-start countdown if launched due to background fall detection
+    _autoStartCountdownIfPending();
+  }
+
+  Future<void> _autoStartCountdownIfPending() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final bool openSos = prefs.getBool('pending_open_sos') ?? false;
+      if (openSos && !_sosService.isSOSActive) {
+        await prefs.setBool('pending_open_sos', false);
+        await _sosService.startSOSCountdown();
+        setState(() {
+          _sosActive = true;
+          _countdownSeconds = _sosService.countdownSeconds;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error auto-starting SOS countdown: $e');
+    }
   }
   
   Future<void> _initializeData() async {
+    if (_isInitializing || _isDisposed) {
+      debugPrint('Already initializing or disposed, skipping...');
+      return;
+    }
+    
+    _isInitializing = true;
+    
     try {
       // Load settings first
       await _loadSettings();
       
+      // Check if still mounted and not disposed
+      if (!mounted || _isDisposed) return;
+      
       // Then load emergency contacts
       await _loadEmergencyContacts();
+      
+      // Check if still mounted and not disposed
+      if (!mounted || _isDisposed) return;
       
       // Finally check location permission
       await _checkLocationPermission();
     } catch (e) {
       debugPrint('Error initializing SOS screen: $e');
       // Don't crash the app, just show error
-      if (mounted) {
+      if (mounted && !_isDisposed) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error loading SOS data: $e'),
@@ -98,11 +173,16 @@ class _SosScreenState extends State<SosScreen> {
           ),
         );
       }
+    } finally {
+      if (!_isDisposed) {
+        _isInitializing = false;
+      }
     }
   }
   
   @override
   void dispose() {
+    _isDisposed = true;
     _authSubscription.cancel();
     _countdownTimer?.cancel();
     _monitoringTimer?.cancel();
@@ -114,57 +194,55 @@ class _SosScreenState extends State<SosScreen> {
   }
   
   Future<void> _loadSettings() async {
-    if (_currentUserId == null) {
-      debugPrint('No user ID available for loading settings');
-      return;
-    }
-    
-    setState(() => _isLoading = true);
-    
     try {
-      _sosSettings = await _firebaseService.getSosSettings(_currentUserId!);
+      final prefs = await SharedPreferences.getInstance();
       
-      if (mounted) {
-        setState(() {
-          _autoSosEnabled = _sosSettings?['autoSosEnabled'] ?? false;
-          _emergencyNumberController.text = _sosSettings?['emergencyNumber'] ?? '';
-        });
-        
-        if (_autoSosEnabled) {
-          _startMonitoring();
-        }
-      }
+      setState(() {
+        _autoSosEnabled = prefs.getBool('auto_sos_enabled') ?? false;
+        _emergencyNumberController.text = prefs.getString('emergency_number') ?? '';
+        _sosSettings = {
+          'heartRateThreshold': prefs.getInt('heart_rate_threshold') ?? 100,
+          'spo2Threshold': prefs.getInt('spo2_threshold') ?? 95,
+          'abnormalDurationSeconds': prefs.getInt('abnormal_duration_seconds') ?? 30,
+          'locationSharing': prefs.getBool('location_sharing') ?? true,
+        };
+      });
+      
+      debugPrint('✅ Settings loaded from local storage');
+      debugPrint('Auto SOS: $_autoSosEnabled');
+      debugPrint('Emergency Number: ${_emergencyNumberController.text}');
     } catch (e) {
       debugPrint('Error loading settings: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
     }
   }
   
   Future<void> _saveSettings() async {
-    if (_currentUserId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please log in to save settings'),
-          backgroundColor: AppTheme.dangerColor,
-        ),
-      );
-      return;
-    }
-    
     try {
-      final settings = {
-        'autoSosEnabled': _autoSosEnabled,
-        'emergencyNumber': _emergencyNumberController.text,
-        'heartRateThreshold': _sosSettings?['heartRateThreshold'] ?? 100,
-        'spo2Threshold': _sosSettings?['spo2Threshold'] ?? 95,
-        'abnormalDurationSeconds': _sosSettings?['abnormalDurationSeconds'] ?? 30,
-        'locationSharing': _sosSettings?['locationSharing'] ?? true,
-      };
+      // Save to local SharedPreferences first for immediate persistence
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('auto_sos_enabled', _autoSosEnabled);
+      await prefs.setString('emergency_number', _emergencyNumberController.text);
+      await prefs.setInt('heart_rate_threshold', _sosSettings?['heartRateThreshold'] ?? 100);
+      await prefs.setInt('spo2_threshold', _sosSettings?['spo2Threshold'] ?? 95);
+      await prefs.setInt('abnormal_duration_seconds', _sosSettings?['abnormalDurationSeconds'] ?? 30);
+      await prefs.setBool('location_sharing', _sosSettings?['locationSharing'] ?? true);
       
-      await _firebaseService.saveSosSettings(_currentUserId!, settings);
+      debugPrint('✅ Settings saved to local storage');
+      
+      // Also save to Firebase if user is logged in
+      if (_currentUserId != null) {
+        final settings = {
+          'autoSosEnabled': _autoSosEnabled,
+          'emergencyNumber': _emergencyNumberController.text,
+          'heartRateThreshold': _sosSettings?['heartRateThreshold'] ?? 100,
+          'spo2Threshold': _sosSettings?['spo2Threshold'] ?? 95,
+          'abnormalDurationSeconds': _sosSettings?['abnormalDurationSeconds'] ?? 30,
+          'locationSharing': _sosSettings?['locationSharing'] ?? true,
+        };
+        
+        await _firebaseService.saveSosSettings(_currentUserId!, settings);
+        debugPrint('✅ Settings saved to Firebase');
+      }
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -222,7 +300,6 @@ class _SosScreenState extends State<SosScreen> {
       }
     } catch (e) {
       debugPrint('Error loading emergency contacts: $e');
-      // Don't crash, just log the error
     }
   }
   
@@ -292,7 +369,7 @@ class _SosScreenState extends State<SosScreen> {
     }
   }
   
-  void _toggleAutoSos(bool value) {
+  void _toggleAutoSos(bool value) async {
     setState(() {
       _autoSosEnabled = value;
     });
@@ -300,8 +377,12 @@ class _SosScreenState extends State<SosScreen> {
     _saveSettings();
     
     if (value) {
+      // Enable SOS with automatic fall detection
+      await _sosService.enableSOS();
       _startMonitoring();
     } else {
+      // Disable SOS and fall detection
+      await _sosService.disableSOS();
       _stopMonitoring();
     }
   }
@@ -433,6 +514,9 @@ class _SosScreenState extends State<SosScreen> {
   }
   
   void _startMonitoring() {
+    // Stop existing monitoring first
+    _stopMonitoring();
+    
     _monitoringTimer = Timer.periodic(
       Duration(milliseconds: AppConstants.sosMonitoringIntervalMs),
       (_) => _checkVitals(),
@@ -446,12 +530,26 @@ class _SosScreenState extends State<SosScreen> {
     _abnormalVitalsStartTime = null;
   }
   
+  bool _isCheckingVitals = false;
+
   void _checkVitals() {
+    // Prevent re-entrant calls that can eventually blow the stack if the
+    // check itself throws and the Timer keeps scheduling new callbacks.
+    if (_isCheckingVitals) return;
+    _isCheckingVitals = true;
+    // Prevent execution if disposed or not mounted
+    if (_isDisposed || !mounted) {
+      return;
+    }
+    
     // In a real app, these values would come from a connected wearable
-    // For demo purposes, we'll simulate random fluctuations
-    setState(() {
-      
-    });
+    // For demo purposes, we'll simulate random fluctuations within normal ranges
+    // to prevent accidental SOS triggers during testing
+    if (!_sosActive) {
+      // Simulate normal vital signs with slight variations
+      _heartRate = 70 + (DateTime.now().millisecond % 10); // 70-79 BPM
+      _spo2 = 97 + (DateTime.now().second % 3); // 97-99%
+    }
     
     // Check if vitals are abnormal
     bool isAbnormal = _heartRate > AppConstants.hrThresholdHigh || 
@@ -461,6 +559,7 @@ class _SosScreenState extends State<SosScreen> {
       // First detection of abnormal vitals
       _abnormalVitalsDetected = true;
       _abnormalVitalsStartTime = DateTime.now();
+      debugPrint('🚨 Abnormal vitals detected: HR=$_heartRate, SpO2=$_spo2');
     } else if (isAbnormal && _abnormalVitalsDetected) {
       // Continuing abnormal vitals
       final now = DateTime.now();
@@ -468,17 +567,20 @@ class _SosScreenState extends State<SosScreen> {
       
       if (duration >= AppConstants.sosAbnormalDurationMs && !_sosActive) {
         // Abnormal vitals for the threshold duration, trigger SOS
+        debugPrint('⚠️ Triggering Auto SOS after ${duration}ms of abnormal vitals');
         _triggerAutoSos();
       }
     } else if (!isAbnormal && _abnormalVitalsDetected) {
       // Vitals returned to normal
       _abnormalVitalsDetected = false;
       _abnormalVitalsStartTime = null;
+      debugPrint('✅ Vitals returned to normal');
     }
+    _isCheckingVitals = false;
   }
   
   void _triggerAutoSos() {
-    if (!mounted) return;
+    if (!mounted || _sosActive) return; // Prevent multiple triggers
     
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -495,34 +597,51 @@ class _SosScreenState extends State<SosScreen> {
   }
   
   void _startSos() {
-    setState(() {
-      _sosActive = true;
-      _countdownSeconds = 30;
-    });
-    
-    // Update current location
-    _getCurrentPosition();
-    
-    // Save SOS event to database
-    _saveSosEvent('manual');
-    
-    // Play loud alarm sound
-    _playAlarm();
-    
-    // Start countdown
-    _countdownTimer = Timer.periodic(
-      const Duration(seconds: 1),
-      (timer) {
-        setState(() {
-          if (_countdownSeconds > 0) {
-            _countdownSeconds--;
-          } else {
-            _dispatchEmergency();
-            timer.cancel();
+    try {
+      // Cancel any previous local timers
+      _countdownTimer?.cancel();
+
+      if (!mounted || _isDisposed) return;
+
+      // Persist a record that user manually started SOS
+      unawaited(_saveSosEvent('manual'));
+
+      // Start the global SOS countdown via service (handles alarm + timer)
+      unawaited(_sosService.startSOSCountdown());
+
+      // Proactively request phone permission so the app can auto-dial when dispatching
+      unawaited(() async {
+        try {
+          final status = await Permission.phone.status;
+          if (!status.isGranted) {
+            await Permission.phone.request();
           }
+        } catch (_) {}
+      }());
+
+      // Update current location (safe)
+      unawaited(_getCurrentPosition());
+
+      // Immediately reflect active UI and seconds from service
+      setState(() {
+        _sosActive = true;
+        _countdownSeconds = _sosService.countdownSeconds;
+      });
+    } catch (e) {
+      debugPrint('❌ Unexpected error starting SOS: $e');
+      if (mounted && !_isDisposed) {
+        setState(() {
+          _sosActive = false;
+          _countdownSeconds = 30;
         });
-      },
-    );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Unable to start SOS: $e'),
+            backgroundColor: AppTheme.dangerColor,
+          ),
+        );
+      }
+    }
   }
   
   Future<void> _saveSosEvent(String type) async {
@@ -558,6 +677,9 @@ class _SosScreenState extends State<SosScreen> {
     
     // Stop alarm sound
     _stopAlarm();
+    
+    // Stop global SOS countdown if active
+    _sosService.stopSOSCountdown();
     
     // Update SOS event status
     _updateSosEventStatus('cancelled');
@@ -690,20 +812,53 @@ class _SosScreenState extends State<SosScreen> {
   // Auto-dial emergency number
   Future<void> _callNumber(String number) async {
     try {
-      if (await Permission.phone.request().isGranted) {
-        // Auto-dial (requires CALL_PHONE permission)
+      // First try to get phone permission
+      final status = await Permission.phone.status;
+      if (!status.isGranted) {
+        final result = await Permission.phone.request();
+        if (!result.isGranted) {
+          debugPrint('⚠️ Phone permission denied, trying to open dialer');
+          // Fallback to opening dialer
+          final url = 'tel:$number';
+          if (await canLaunchUrl(Uri.parse(url))) {
+            await launchUrl(Uri.parse(url));
+            debugPrint('✅ Opened dialer with number: $number');
+            return;
+          }
+        }
+      }
+      
+      // Try AndroidIntent first (direct call)
+      try {
         final intent = AndroidIntent(
           action: 'android.intent.action.CALL',
           data: 'tel:$number',
         );
         await intent.launch();
         debugPrint('✅ Auto-dialing emergency number: $number');
+      } catch (e) {
+        debugPrint('⚠️ AndroidIntent failed, trying url_launcher: $e');
+        // Fallback to url_launcher
+        final url = 'tel:$number';
+        if (await canLaunchUrl(Uri.parse(url))) {
+          await launchUrl(Uri.parse(url));
+          debugPrint('✅ Opened dialer with number: $number');
       } else {
-        // Do nothing if permission denied (no fallback to dialer)
-        debugPrint('⚠️ Permission denied, not dialing');
+          debugPrint('❌ Cannot launch dialer for number: $number');
+        }
       }
     } catch (e) {
       debugPrint('❌ Error placing emergency call: $e');
+      // Final fallback - try to open dialer anyway
+      try {
+        final url = 'tel:$number';
+        if (await canLaunchUrl(Uri.parse(url))) {
+          await launchUrl(Uri.parse(url));
+          debugPrint('✅ Final fallback - opened dialer with number: $number');
+        }
+      } catch (fallbackError) {
+        debugPrint('❌ Final fallback also failed: $fallbackError');
+      }
     }
   }
 
@@ -733,6 +888,12 @@ class _SosScreenState extends State<SosScreen> {
     } catch (e) {
       debugPrint('Error stopping alarm sound: $e');
     }
+  }
+
+  @override
+  void setState(VoidCallback fn) {
+    if (!mounted || _isDisposed) return; // prevent setState after dispose
+    super.setState(fn);
   }
 
   @override

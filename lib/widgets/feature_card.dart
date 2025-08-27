@@ -21,14 +21,22 @@ class FeatureCard extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: AppTheme.bgGlassLight,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withOpacity(0.1)),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white.withOpacity(0.10),
+              Colors.white.withOpacity(0.04),
+            ],
+          ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 10,
-              spreadRadius: -5,
+              color: Colors.black.withOpacity(0.35),
+              blurRadius: 20,
+              spreadRadius: 1,
+              offset: const Offset(0, 10),
             ),
           ],
         ),
@@ -38,8 +46,23 @@ class FeatureCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.2),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    color.withOpacity(0.18),
+                    color.withOpacity(0.10),
+                  ],
+                ),
                 shape: BoxShape.circle,
+                border: Border.all(color: color.withOpacity(0.25)),
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withOpacity(0.2),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
               child: Icon(
                 icon,
@@ -51,11 +74,7 @@ class FeatureCard extends StatelessWidget {
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
+              style: AppTheme.headlineMedium.copyWith(fontSize: 14),
             ),
           ],
         ),

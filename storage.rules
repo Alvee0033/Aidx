@@ -1,0 +1,48 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules for AidX Health App
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to validate image file types
+    function isValidImageType() {
+      return resource.contentType.matches('image/.*');
+    }
+    
+    // Helper function to validate file size (max 10MB)
+    function isValidSize() {
+      return resource.size < 10 * 1024 * 1024;
+    }
+    
+    // Community posts images - authenticated users can upload
+    match /community_posts/{fileName} {
+      allow read: if true; // Public read access for community post images
+      allow write: if isAuthenticated() 
+                   && isValidImageType() 
+                   && isValidSize();
+    }
+    
+    // User profile images - users can upload their own profile images
+    match /profile_images/{userId}/{fileName} {
+      allow read: if true; // Public read access for profile images
+      allow write: if isAuthenticated() 
+                   && request.auth.uid == userId 
+                   && isValidImageType() 
+                   && isValidSize();
+    }
+    
+    // Health documents - users can upload their own health documents
+    match /health_documents/{userId}/{fileName} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Deny access to all other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

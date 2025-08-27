@@ -3,8 +3,14 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'package:aidx/utils/theme.dart';
-import 'package:aidx/services/esp32_max30102_service.dart';
+import 'package:aidx/services/android_wearable_service.dart';
+import 'package:aidx/services/vitals_sync_service.dart';
+import 'package:aidx/services/firebase_service.dart';
+import 'package:provider/provider.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:aidx/services/wear_os_channel.dart';
 
 class VitalsScreen extends StatefulWidget {
   const VitalsScreen({Key? key}) : super(key: key);
@@ -14,14 +20,21 @@ class VitalsScreen extends StatefulWidget {
 }
 
 class _VitalsScreenState extends State<VitalsScreen> {
-  final ESP32MAX30102Service _esp32Service = ESP32MAX30102Service();
+  AndroidWearableService? _wearableService;
+  late final VitalsSyncService _syncService;
   final math.Random _random = math.Random();
+  StreamSubscription<QuerySnapshot>? _wearStreamSub;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _vitalsDocSub;
   
   // Vitals data with dynamic BPM
   int _heartRate = 87; // Fluctuating between 86-89
   int _spo2 = 98;
   double _temperature = 36.5;
   int _stepCount = 73;
+  int _bpSystolic = 0;
+  int _bpDiastolic = 0;
+
+  VoidCallback? _wearOsNotifierListener;
   
   // Infinite ECG data
   final List<ECGData> _ecgData = [];
@@ -33,34 +46,134 @@ class _VitalsScreenState extends State<VitalsScreen> {
   @override
   void initState() {
     super.initState();
+    _syncService = VitalsSyncService(firebaseService: FirebaseService())
+      ..addListener(() {
+        if (!mounted) return;
+        setState(() {
+          if (_syncService.lastHr != null) _heartRate = _syncService.lastHr!;
+          if (_syncService.lastSpo2 != null) _spo2 = _syncService.lastSpo2!;
+          if (_syncService.lastBp != null) {
+            final parts = _syncService.lastBp!.split('/');
+            if (parts.length == 2) {
+              _bpSystolic = int.tryParse(parts[0]) ?? 0;
+              _bpDiastolic = int.tryParse(parts[1]) ?? 0;
+            }
+          }
+        });
+      })
+      ..startWatchControlListener();
     
-    // Generate infinite ECG data with dynamic BPM
-    _startInfiniteECGSimulation();
+    // ECG simulation disabled per request
     
     // Periodically update heart rate within 86-89 range
     _startHeartRateFluctuation();
     
-    // Listen to ESP32 service for real data
-    _initializeESP32Listeners();
+    // Listen to wearable service for real data
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _wearableService = context.read<AndroidWearableService>();
+      _wearableService!.addListener(_onWearableUpdate);
+      // Kick auto-reconnect when entering vitals screen
+      // ignore: unawaited_futures
+      _wearableService!.autoReconnect();
+      _subscribeToWearableFirestore();
+      _subscribeToLatestVitalsDoc();
+    });
+
+    // Listen to Wear OS MethodChannel feed
+    _wearOsNotifierListener = () {
+      final v = WearOsChannel.vitalsNotifier.value;
+      if (v == null) return;
+      if (!mounted) return;
+      setState(() {
+        if (v.heartRate != null && v.heartRate! > 0) _heartRate = v.heartRate!;
+        if (v.spo2 != null && v.spo2! >= 0) _spo2 = v.spo2!;
+        if (v.bpSystolic != null && v.bpSystolic! > 0) _bpSystolic = v.bpSystolic!;
+        if (v.bpDiastolic != null && v.bpDiastolic! > 0) _bpDiastolic = v.bpDiastolic!;
+      });
+    };
+    WearOsChannel.vitalsNotifier.addListener(_wearOsNotifierListener!);
   }
   
-  void _initializeESP32Listeners() {
-    _esp32Service.heartRateStream.listen((rate) {
-      if (mounted && rate > 0) {
-        setState(() => _heartRate = rate);
+  void _subscribeToLatestVitalsDoc() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    _vitalsDocSub?.cancel();
+    _vitalsDocSub = FirebaseFirestore.instance
+        .collection('health_data')
+        .doc(user.uid)
+        .snapshots()
+        .listen((doc) {
+      if (!doc.exists) return;
+      final data = doc.data();
+      if (data == null) return;
+      setState(() {
+        final hr = (data['heart_rate'] as num?)?.toInt();
+        final sp = (data['spo2'] as num?)?.toInt();
+        final bp = data['blood_pressure']?.toString();
+        if (hr != null && hr > 0) _heartRate = hr;
+        if (sp != null && sp > 0) _spo2 = sp;
+        if (bp != null && bp.contains('/')) {
+          final parts = bp.split('/');
+          if (parts.length == 2) {
+            _bpSystolic = int.tryParse(parts[0]) ?? 0;
+            _bpDiastolic = int.tryParse(parts[1]) ?? 0;
+          }
+        }
+      });
+    });
+  }
+
+  void _subscribeToWearableFirestore() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    // Listen to latest wearable_data for the user
+    _wearStreamSub?.cancel();
+    _wearStreamSub = FirebaseFirestore.instance
+        .collection('wearable_data')
+        .where('userId', isEqualTo: user.uid)
+        .orderBy('timestamp', descending: true)
+        .limit(20)
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted) return;
+      for (final doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final type = (data['dataType'] ?? '').toString();
+        final value = data['value'];
+        switch (type) {
+          case 'heart_rate':
+            if (value is num && value > 0) {
+              setState(() => _heartRate = value.toInt());
+            }
+            break;
+          case 'blood_oxygen':
+          case 'spo2':
+            if (value is num && value > 0) {
+              setState(() => _spo2 = value.toInt());
+            }
+            break;
+          case 'temperature':
+            if (value is num && value > 0) {
+              setState(() => _temperature = value.toDouble());
+            }
+            break;
+          case 'steps':
+            if (value is num && value >= 0) {
+              setState(() => _stepCount = value.toInt());
+            }
+            break;
+        }
       }
     });
-    
-    _esp32Service.spo2Stream.listen((spo2) {
-      if (mounted && spo2 > 0) {
-        setState(() => _spo2 = spo2);
-      }
-    });
-    
-    _esp32Service.temperatureStream.listen((temp) {
-      if (mounted && temp > 0) {
-        setState(() => _temperature = temp);
-      }
+  }
+  
+  void _onWearableUpdate() {
+    if (!mounted || _wearableService == null) return;
+    final svc = _wearableService!;
+    setState(() {
+      if (svc.heartRate > 0) _heartRate = svc.heartRate;
+      if (svc.spo2 > 0) _spo2 = svc.spo2;
+      if (svc.temperature > 0) _temperature = svc.temperature.toDouble();
     });
   }
   
@@ -127,6 +240,12 @@ class _VitalsScreenState extends State<VitalsScreen> {
   void dispose() {
     _graphTimer?.cancel();
     _ecgScrollController.dispose();
+    _wearableService?.removeListener(_onWearableUpdate);
+    _wearStreamSub?.cancel();
+    _vitalsDocSub?.cancel();
+    if (_wearOsNotifierListener != null) {
+      WearOsChannel.vitalsNotifier.removeListener(_wearOsNotifierListener!);
+    }
     super.dispose();
   }
   
@@ -170,12 +289,14 @@ class _VitalsScreenState extends State<VitalsScreen> {
                 ),
               ),
               
-              // Vitals Content
+              // Vitals Content + Controls
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Column(
                     children: [
+                      _buildControlsRow(),
+                      const SizedBox(height: 12),
                       // Heart Rate and SpO2 in one row
                       Row(
                         children: [
@@ -187,17 +308,17 @@ class _VitalsScreenState extends State<VitalsScreen> {
                       
                       const SizedBox(height: 16),
                       
-                      // ECG Graph (Full width, Infinite)
-                      _buildInfiniteECGSection(),
+                      // ECG Graph removed per request
+
+                      // Blood Pressure
+                      _buildBloodPressureCard(),
                       
                       const SizedBox(height: 16),
                       
-                      // Temperature and Step Count in one row
+                      // Temperature only (Step Count card removed per request)
                       Row(
                         children: [
                           Expanded(child: _buildTemperatureCard()),
-                          const SizedBox(width: 16),
-                          Expanded(child: _buildStepCountCard()),
                         ],
                       ),
                     ],
@@ -208,6 +329,125 @@ class _VitalsScreenState extends State<VitalsScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildControlsRow() {
+    final status = _syncService.status;
+    final connectionStatus = _syncService.connectionStatus;
+    return Column(
+      children: [
+        Row(
+          children: [
+            ElevatedButton.icon(
+              onPressed: _syncService.isSyncing ? null : () async {
+                await _syncService.requestConnection();
+                await _syncService.syncFromFirestore();
+              },
+              icon: const Icon(Icons.sync),
+              label: const Text('Sync with Watch'),
+            ),
+            const SizedBox(width: 8),
+            TextButton.icon(
+              onPressed: _syncService.isSyncing ? null : _openManualEntryDialog,
+              icon: const Icon(Icons.edit),
+              label: const Text('Manual Entry'),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  status.isEmpty ? '' : status,
+                  style: const TextStyle(color: Colors.white70),
+                  textAlign: TextAlign.right,
+                ),
+              ),
+            )
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Icon(
+              connectionStatus.contains('Connected') ? Icons.watch : Icons.watch_off,
+              color: connectionStatus.contains('Connected') ? Colors.green : Colors.red,
+              size: 16,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              connectionStatus,
+              style: TextStyle(
+                color: connectionStatus.contains('Connected') ? Colors.green : Colors.red,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openManualEntryDialog() async {
+    final hrController = TextEditingController();
+    final spo2Controller = TextEditingController();
+    final sysController = TextEditingController();
+    final diaController = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Manual Vitals Entry'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: hrController,
+                decoration: const InputDecoration(labelText: 'Heart Rate (bpm)'),
+                keyboardType: TextInputType.number,
+              ),
+              TextField(
+                controller: spo2Controller,
+                decoration: const InputDecoration(labelText: 'SpO2 (%)'),
+                keyboardType: TextInputType.number,
+              ),
+              TextField(
+                controller: sysController,
+                decoration: const InputDecoration(labelText: 'Systolic (mmHg)'),
+                keyboardType: TextInputType.number,
+              ),
+              TextField(
+                controller: diaController,
+                decoration: const InputDecoration(labelText: 'Diastolic (mmHg)'),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Disclaimer: Smartwatch health data is not medical-grade.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final hr = int.tryParse(hrController.text);
+                final spo2 = int.tryParse(spo2Controller.text);
+                final sys = int.tryParse(sysController.text);
+                final dia = int.tryParse(diaController.text);
+                await _syncService.submitManual(hr: hr, spo2: spo2, sys: sys, dia: dia);
+                if (!mounted) return;
+                Navigator.of(context).pop();
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
     );
   }
   
@@ -358,14 +598,15 @@ class _VitalsScreenState extends State<VitalsScreen> {
       ),
     );
   }
-  
-  Widget _buildInfiniteECGSection() {
+
+  Widget _buildBloodPressureCard() {
+    final bool hasBp = _bpSystolic > 0 && _bpDiastolic > 0;
+    final String bpText = hasBp ? '$_bpSystolic/$_bpDiastolic' : 'N/A';
     return Container(
-      height: 200,
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            AppTheme.dangerColor.withOpacity(0.2),
+            AppTheme.successColor.withOpacity(0.2),
             Colors.transparent,
           ],
           begin: Alignment.topCenter,
@@ -374,96 +615,75 @@ class _VitalsScreenState extends State<VitalsScreen> {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppTheme.dangerColor.withOpacity(0.1),
+            color: AppTheme.successColor.withOpacity(0.1),
             blurRadius: 15,
             offset: const Offset(0, 5),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.successColor.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                FeatherIcons.activity,
+                color: AppTheme.successColor,
+                size: 40,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppTheme.dangerColor.withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    FeatherIcons.activity,
-                    color: AppTheme.dangerColor,
-                    size: 40,
+                Text(
+                  'Blood Pressure',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.7),
+                    fontSize: 16,
                   ),
                 ),
-                const SizedBox(width: 16),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                const SizedBox(height: 4),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
                   children: [
                     Text(
-                      'ECG Graph',
+                      bpText,
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.7),
-                        fontSize: 16,
+                        color: AppTheme.successColor,
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(width: 8),
                     Text(
-                      'Real-time Cardiac Activity',
+                      'mmHg',
                       style: TextStyle(
-                        color: AppTheme.dangerColor,
-                        fontSize: 12,
+                        color: AppTheme.successColor.withOpacity(0.7),
+                        fontSize: 16,
                       ),
                     ),
                   ],
                 ),
               ],
-            ),
-          ),
-          
-          // Infinite ECG Graph
-          Expanded(
-            child: ListView.builder(
-              controller: _ecgScrollController,
-              scrollDirection: Axis.horizontal,
-              itemCount: 1,
-              itemBuilder: (context, _) => SizedBox(
-                width: MediaQuery.of(context).size.width * 2, // Double the width for scrolling
-                child: SfCartesianChart(
-                  plotAreaBorderWidth: 0,
-                  primaryXAxis: NumericAxis(
-                    isVisible: false,
-                    majorGridLines: const MajorGridLines(width: 0),
-                    edgeLabelPlacement: EdgeLabelPlacement.none,
-                  ),
-                  primaryYAxis: NumericAxis(
-                    isVisible: false,
-                    majorGridLines: const MajorGridLines(width: 0),
-                    minimum: -2,
-                    maximum: 2,
-                  ),
-                  series: <LineSeries<ECGData, double>>[
-                    LineSeries<ECGData, double>(
-                      dataSource: _ecgData,
-                      xValueMapper: (ECGData data, _) => data.time,
-                      yValueMapper: (ECGData data, _) => data.value,
-                      color: AppTheme.dangerColor,
-                      width: 3,
-                      animationDuration: 0,
-                      enableTooltip: false,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
+            )
+          ],
+        ),
       ),
     );
   }
+  
+
+  
+  // ECG helper methods removed below are kept for reference but unused
+  // double _generateRealisticECG(double t, int heartRateBPM) { return 0; }
+  // double _qrsComplex(double t, double bpm) { return 0; }
   
   Widget _buildTemperatureCard() {
     return Container(

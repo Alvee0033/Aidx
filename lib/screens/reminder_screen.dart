@@ -4,11 +4,14 @@ import '../widgets/glass_container.dart';
 import '../utils/theme.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
+import 'scan_prescription_screen.dart';
 
 class ReminderScreen extends StatefulWidget {
   const ReminderScreen({Key? key}) : super(key: key);
@@ -34,6 +37,7 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
   String _selectedFrequency = 'once';
   List<Map<String, dynamic>> _medications = [];
   bool _isLoadingMedications = false;
+  Set<String> _scheduledReminderIds = {}; // Track scheduled reminders to prevent duplicates
   
   @override
   void initState() {
@@ -41,7 +45,133 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
     _firebaseService = FirebaseService();
     _notificationService = NotificationService();
     _tabController = TabController(length: 3, vsync: this);
-    _loadMedications();
+    _initializeAndLoadData();
+    _checkNotificationStatus();
+  }
+
+  Future<void> _checkNotificationStatus() async {
+    try {
+      final status = await _notificationService.getServiceStatus();
+      debugPrint('🔔 Notification status: $status');
+
+      if (!status['isInitialized'] || !status['hasPermissions']) {
+        // Show a subtle hint about notification permissions
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('💡 Enable notifications to receive medication reminders on time!'),
+                backgroundColor: AppTheme.infoColor ?? Colors.blue,
+                duration: const Duration(seconds: 3),
+                action: SnackBarAction(
+                  label: 'Enable',
+                  textColor: Colors.white,
+                  onPressed: () async {
+                    await _notificationService.requestPermissions();
+                  },
+                ),
+              ),
+            );
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error checking notification status: $e');
+    }
+  }
+
+  // Schedule notifications for existing reminders
+  Future<void> _scheduleReminderNotifications(List<QueryDocumentSnapshot> reminders) async {
+    try {
+      debugPrint('🔄 Scheduling notifications for ${reminders.length} reminders...');
+
+      // Clear old scheduled reminder IDs to prevent duplicates
+      _scheduledReminderIds.clear();
+
+      for (final doc in reminders) {
+        final data = doc.data() as Map<String, dynamic>;
+        final String reminderId = doc.id;
+
+        // Skip if already scheduled
+        if (_scheduledReminderIds.contains(reminderId)) {
+          debugPrint('⏭️ Skipping already scheduled reminder $reminderId');
+          continue;
+        }
+
+        try {
+          final dateTime = (data['dateTime'] as Timestamp?)?.toDate();
+          if (dateTime == null) {
+            debugPrint('⚠️ Skipping reminder $reminderId: invalid dateTime');
+            continue;
+          }
+
+          // Only schedule if the reminder is in the future
+          if (dateTime.isBefore(DateTime.now())) {
+            debugPrint('⚠️ Skipping reminder $reminderId: already past due ($dateTime)');
+            continue;
+          }
+
+          final title = data['title'] ?? 'Medication Reminder';
+          final body = data['description'] ?? data['title'] ?? 'Time for your medication';
+          final frequency = data['frequency'] ?? 'once';
+          final type = data['type'] ?? 'medication';
+
+          debugPrint('📅 Scheduling notification for reminder $reminderId at $dateTime');
+
+          // Check permissions first
+          final hasPermission = await _notificationService.hasPermissions();
+          if (!hasPermission) {
+            debugPrint('❌ No notification permission for reminder $reminderId');
+            continue;
+          }
+
+          if (frequency == 'once') {
+            // Schedule one-time notification
+            await _notificationService.scheduleNotification(
+              title: title,
+              body: body,
+              scheduledTime: dateTime,
+              payload: 'reminder_$reminderId',
+            );
+            debugPrint('✅ Scheduled one-time notification for $reminderId');
+            _scheduledReminderIds.add(reminderId); // Mark as scheduled
+          } else {
+            // Schedule recurring notification
+            await _notificationService.scheduleRecurringNotification(
+              title: title,
+              body: body,
+              scheduledTime: dateTime,
+              frequency: frequency,
+              payload: 'reminder_$reminderId',
+            );
+            debugPrint('✅ Scheduled recurring notification for $reminderId ($frequency)');
+            _scheduledReminderIds.add(reminderId); // Mark as scheduled
+          }
+        } catch (reminderError) {
+          debugPrint('❌ Error scheduling notification for reminder $reminderId: $reminderError');
+          // Continue with other reminders
+        }
+      }
+
+      debugPrint('✅ Finished scheduling notifications for reminders');
+    } catch (e) {
+      debugPrint('❌ Error in _scheduleReminderNotifications: $e');
+    }
+  }
+
+  Future<void> _initializeAndLoadData() async {
+    try {
+      // Initialize Firestore collections first
+      await _firebaseService.initializeCollections();
+      debugPrint('✅ Collections initialized');
+      
+      // Then load medications
+      await _loadMedications();
+    } catch (e) {
+      debugPrint('Error in initialization: $e');
+      // Still try to load medications even if initialization fails
+      await _loadMedications();
+    }
   }
   
   @override
@@ -53,6 +183,96 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
     _tabController.dispose();
     super.dispose();
   }
+
+  // Refresh reminders and re-schedule notifications
+  Future<void> _refreshReminders() async {
+    try {
+      setState(() {
+        _scheduledReminderIds.clear(); // Clear tracking
+      });
+
+      // Cancel all existing notifications to prevent duplicates
+      await _notificationService.cancelAllNotifications();
+      debugPrint('✅ Cancelled all existing notifications');
+
+      // The StreamBuilder will automatically reload and re-schedule notifications
+      // via the _scheduleReminderNotifications method
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Reminders refreshed and notifications re-scheduled'),
+            backgroundColor: AppTheme.successColor,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Error refreshing reminders: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error refreshing reminders: $e'),
+            backgroundColor: AppTheme.dangerColor,
+          ),
+        );
+      }
+    }
+  }
+
+  // Debug method to test notification scheduling
+  Future<void> _debugScheduledNotifications() async {
+    try {
+      debugPrint('🔍 DEBUG: Starting notification scheduling test...');
+
+      // Check service status
+      final status = await _notificationService.getServiceStatus();
+      debugPrint('🔍 DEBUG: Service status: $status');
+
+      // Get current pending notifications
+      final pending = await _notificationService.getPendingNotifications();
+      debugPrint('🔍 DEBUG: Current pending notifications: ${pending.length}');
+      for (var notification in pending) {
+        debugPrint('🔍 DEBUG: Pending notification - ID: ${notification.id}, Title: ${notification.title}, Body: ${notification.body}');
+      }
+
+      // Schedule a test notification for 1 minute from now
+      final testTime = DateTime.now().add(const Duration(minutes: 1));
+      debugPrint('🔍 DEBUG: Scheduling test notification for $testTime');
+
+      await _notificationService.scheduleNotification(
+        title: 'DEBUG: Test Scheduled Notification',
+        body: 'This is a debug test notification scheduled for 1 minute from now',
+        scheduledTime: testTime,
+        payload: 'debug_test',
+      );
+
+      // Check pending notifications again
+      final pendingAfter = await _notificationService.getPendingNotifications();
+      debugPrint('🔍 DEBUG: Pending notifications after scheduling: ${pendingAfter.length}');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Debug: Test notification scheduled for 1 minute from now. Check ADB logs.'),
+            backgroundColor: AppTheme.infoColor ?? Colors.blue,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+
+      debugPrint('🔍 DEBUG: Notification scheduling test completed');
+    } catch (e) {
+      debugPrint('❌ DEBUG: Error in debug test: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Debug test failed: $e'),
+            backgroundColor: AppTheme.dangerColor,
+          ),
+        );
+      }
+    }
+  }
   
   Future<void> _loadMedications() async {
     setState(() {
@@ -61,18 +281,91 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
     
     try {
       final userId = FirebaseAuth.instance.currentUser?.uid;
-      if (userId != null) {
-        final medicationsSnapshot = await _firebaseService.getMedicationsStream(userId).first;
+      if (userId == null) {
+        debugPrint('User not authenticated');
+        setState(() {
+          _isLoadingMedications = false;
+        });
+        return;
+      }
+
+      // Try the most basic method first (no filters at all)
+      try {
+        final medicationsSnapshot = await _firebaseService.getMedicationsStreamBasic(userId).first;
         _medications = medicationsSnapshot.docs.map((doc) {
-          final data = doc.data() as Map<String, dynamic>;
-          return {
-            'id': doc.id,
-            ...data,
-          };
-        }).toList();
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+            return {
+              'id': doc.id,
+              ...data,
+            };
+          } catch (docError) {
+            debugPrint('Error processing medication document ${doc.id}: $docError');
+            return null;
+          }
+        }).where((med) => med != null && med['userId'] == userId).cast<Map<String, dynamic>>().toList();
+        debugPrint('✅ Loaded ${_medications.length} medications with basic method');
+      } catch (e) {
+        debugPrint('Error loading medications with basic method: $e');
+
+        // Try with simple user filter
+        try {
+          final medicationsSnapshot = await _firebaseService.getMedicationsStreamSimple(userId).first;
+          _medications = medicationsSnapshot.docs.map((doc) {
+            try {
+              final data = doc.data() as Map<String, dynamic>;
+              return {
+                'id': doc.id,
+                ...data,
+              };
+            } catch (docError) {
+              debugPrint('Error processing medication document ${doc.id}: $docError');
+              return null;
+            }
+          }).where((med) => med != null).cast<Map<String, dynamic>>().toList();
+          debugPrint('✅ Loaded ${_medications.length} medications with simple method');
+        } catch (e2) {
+          debugPrint('Error loading medications with simple method: $e2');
+
+          // Try direct Firestore access
+          try {
+            final medicationsSnapshot = await FirebaseFirestore.instance
+                .collection('medications')
+                .get();
+
+            _medications = medicationsSnapshot.docs.map((doc) {
+              try {
+                final data = doc.data() as Map<String, dynamic>;
+                return {
+                  'id': doc.id,
+                  ...data,
+                };
+              } catch (docError) {
+                debugPrint('Error processing medication document ${doc.id}: $docError');
+                return null;
+              }
+            }).where((med) => med != null && med['userId'] == userId).cast<Map<String, dynamic>>().toList();
+            debugPrint('✅ Loaded ${_medications.length} medications with direct method');
+          } catch (fallbackError) {
+            debugPrint('Error loading medications with direct method: $fallbackError');
+            _medications = [];
+          }
+        }
       }
     } catch (e) {
       debugPrint('Error loading medications: $e');
+      _medications = [];
+      
+      // Show error message to user
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading medications: ${e.toString()}'),
+            backgroundColor: AppTheme.dangerColor,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     } finally {
       setState(() {
         _isLoadingMedications = false;
@@ -133,124 +426,261 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
   }
   
   Future<void> _addReminder() async {
-    if (_formKey.currentState!.validate()) {
-      if (_selectedDate == null || _selectedTime == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please select both date and time')),
-        );
-        return;
-      }
-      
-      setState(() {
-        _isLoading = true;
-      });
-      
-      try {
-        final userId = FirebaseAuth.instance.currentUser?.uid;
-        if (userId == null) {
-          throw Exception('User not authenticated');
-        }
-        
-        final DateTime reminderDateTime = DateTime(
-          _selectedDate!.year,
-          _selectedDate!.month,
-          _selectedDate!.day,
-          _selectedTime!.hour,
-          _selectedTime!.minute,
-        );
-        
-        // Save to Firestore
-        final reminderData = {
-          'title': _titleController.text,
-          'description': _descriptionController.text,
-          'type': _selectedType,
-          'dateTime': reminderDateTime,
-          'frequency': _selectedFrequency,
-          'isActive': true,
-          'dosage': _dosageController.text.isNotEmpty ? _dosageController.text : null,
-          'relatedId': null, // Will be set if medication is selected
-        };
-        
-        await _firebaseService.addReminder(userId, reminderData);
-        
-        // Schedule notification
-        await _notificationService.scheduleNotification(
-          title: 'Medication Reminder',
-          body: 'Time to take your medication',
-          scheduledTime: DateTime.now().add(Duration(hours: 1)),
-        );
-        
-        // Clear form
-        _titleController.clear();
-        _descriptionController.clear();
-        _dosageController.clear();
-        _frequencyController.clear();
-        _selectedDate = null;
-        _selectedTime = null;
-        _selectedType = 'medication';
-        _selectedFrequency = 'once';
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Reminder added successfully'),
-            backgroundColor: AppTheme.successColor,
-          ),
-        );
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error adding reminder: ${e.toString()}'),
-            backgroundColor: AppTheme.dangerColor,
-          ),
-        );
-      } finally {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+    if (!_formKey.currentState!.validate()) {
+      return;
     }
-  }
-  
-    Future<void> _saveMedicationAsReminder(Map<String, dynamic> medication) async {
-    try {
+
+    if (_selectedDate == null || _selectedTime == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select both date and time')),
+      );
+      return;
+    }
+
+    if (_titleController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a reminder title')),
+      );
+      return;
+    }
+
     setState(() {
       _isLoading = true;
     });
-    
+
+    try {
       final userId = FirebaseAuth.instance.currentUser?.uid;
       if (userId == null) {
         throw Exception('User not authenticated');
       }
-      
+
+      final DateTime reminderDateTime = DateTime(
+        _selectedDate!.year,
+        _selectedDate!.month,
+        _selectedDate!.day,
+        _selectedTime!.hour,
+        _selectedTime!.minute,
+      );
+
+      // Validate that the reminder is not in the past
+      if (reminderDateTime.isBefore(DateTime.now())) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cannot set reminder for past time')),
+        );
+        return;
+      }
+
+      // Save to Firestore
+      final reminderData = {
+        'title': _titleController.text.trim(),
+        'description': _descriptionController.text.trim(),
+        'type': _selectedType,
+        'dateTime': reminderDateTime,
+        'frequency': _selectedFrequency,
+        'isActive': true,
+        'dosage': _dosageController.text.isNotEmpty ? _dosageController.text.trim() : null,
+        'relatedId': null, // Will be set if medication is selected
+      };
+
+      await _firebaseService.addReminder(userId, reminderData);
+
+      // Schedule notification at the selected date & time
+      try {
+        // Check permissions first
+        final hasPermission = await _notificationService.hasPermissions();
+        if (!hasPermission) {
+          debugPrint('🔔 Requesting notification permissions...');
+          final permissionGranted = await _notificationService.requestPermissions();
+          if (!permissionGranted) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Notification permission required for reminders. Please enable in app settings.'),
+                  backgroundColor: AppTheme.warningColor,
+                  duration: const Duration(seconds: 5),
+                  action: SnackBarAction(
+                    label: 'Settings',
+                    textColor: Colors.white,
+                    onPressed: () async {
+                      // Try to open app settings
+                      try {
+                        await Permission.notification.request();
+                      } catch (e) {
+                        debugPrint('Error opening settings: $e');
+                      }
+                    },
+                  ),
+                ),
+              );
+            }
+            // Still save the reminder even if notifications fail
+            return;
+          }
+        }
+
+        await _notificationService.scheduleNotification(
+          title: 'Medication Reminder',
+          body: _titleController.text.trim(),
+          scheduledTime: reminderDateTime,
+        );
+        debugPrint('✅ Notification scheduled successfully');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Reminder and notification scheduled successfully!'),
+              backgroundColor: AppTheme.successColor,
+            ),
+          );
+        }
+      } catch (notificationError) {
+        debugPrint('❌ Error scheduling notification: $notificationError');
+
+        // Show warning but don't fail the reminder creation
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Reminder saved, but notification scheduling failed. You will receive the reminder but no notification.'),
+              backgroundColor: AppTheme.warningColor,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+
+      // Clear form
+      _titleController.clear();
+      _descriptionController.clear();
+      _dosageController.clear();
+      _frequencyController.clear();
+      _selectedDate = null;
+      _selectedTime = null;
+      _selectedType = 'medication';
+      _selectedFrequency = 'once';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Reminder added successfully'),
+          backgroundColor: AppTheme.successColor,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error adding reminder: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error adding reminder: ${e.toString()}'),
+          backgroundColor: AppTheme.dangerColor,
+        ),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+  
+  Future<void> _saveMedicationAsReminder(Map<String, dynamic> medication) async {
+    try {
+      setState(() {
+        _isLoading = true;
+      });
+
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) {
+        throw Exception('User not authenticated');
+      }
+
       // Set default reminder time to 1 hour from now
       final reminderDateTime = DateTime.now().add(const Duration(hours: 1));
-      
+
       final reminderData = {
-        'title': 'Take ${medication['name']}',
+        'title': 'Take ${medication['name'] ?? 'Medication'}',
         'description': 'Uses: ${medication['uses'] ?? 'As prescribed'}',
         'type': 'medication',
         'dateTime': reminderDateTime,
         'frequency': 'once',
         'isActive': true,
+        'dosage': medication['dosage'] ?? medication['strength'] ?? null,
         'relatedId': medication['id'],
       };
-      
-      await _firebaseService.addReminder(userId, reminderData);
-      
-      // Schedule notification
-      await _notificationService.scheduleNotification(
-        title: 'Medication Reminder',
-        body: 'Time to take your medication',
-        scheduledTime: DateTime.now().add(Duration(hours: 1)),
-      );
-      
+
+      try {
+        await _firebaseService.addReminder(userId, reminderData);
+        debugPrint('✅ Reminder saved to Firebase successfully');
+      } catch (firebaseError) {
+        debugPrint('Error saving reminder to Firebase: $firebaseError');
+        // Try alternative method - save directly to Firestore
+        try {
+          await FirebaseFirestore.instance.collection('reminders').add({
+            'userId': userId,
+            'title': reminderData['title'],
+            'description': reminderData['description'],
+            'type': reminderData['type'],
+            'dateTime': reminderData['dateTime'],
+            'frequency': reminderData['frequency'],
+            'isActive': reminderData['isActive'],
+            'dosage': reminderData['dosage'],
+            'relatedId': reminderData['relatedId'],
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+          debugPrint('✅ Reminder saved with fallback method');
+        } catch (fallbackError) {
+          debugPrint('Error with fallback method: $fallbackError');
+          throw Exception('Failed to save reminder: $fallbackError');
+        }
+      }
+
+      // Schedule notification at the selected date & time
+      try {
+        // Check permissions first
+        final hasPermission = await _notificationService.hasPermissions();
+        if (!hasPermission) {
+          debugPrint('🔔 Requesting notification permissions...');
+          final permissionGranted = await _notificationService.requestPermissions();
+          if (!permissionGranted) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Notification permission required for medication reminders. Please enable in app settings.'),
+                  backgroundColor: AppTheme.warningColor,
+                  duration: const Duration(seconds: 4),
+                ),
+              );
+            }
+            // Still save the reminder even if notifications fail
+            return;
+          }
+        }
+
+        await _notificationService.scheduleNotification(
+          title: 'Medication Reminder',
+          body: 'Time to take ${medication['name'] ?? 'your medication'}',
+          scheduledTime: reminderDateTime,
+        );
+        debugPrint('✅ Medication notification scheduled successfully');
+      } catch (notificationError) {
+        debugPrint('❌ Error scheduling medication notification: $notificationError');
+
+        // Show warning but don't fail the reminder creation
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Medication reminder saved, but notification scheduling failed.'),
+              backgroundColor: AppTheme.warningColor,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Reminder set for ${medication['name']}'),
+          content: Text('Reminder set for ${medication['name'] ?? 'medication'}'),
           backgroundColor: AppTheme.successColor,
         ),
       );
     } catch (e) {
+      debugPrint('Error in _saveMedicationAsReminder: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error setting reminder: ${e.toString()}'),
@@ -280,7 +710,7 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
               ),
             ),
             content: Text(
-              'Are you sure you want to delete "${medication['name']}" from your saved medications?',
+              'Are you sure you want to delete "${medication['name'] ?? 'this medication'}" from your saved medications?',
               style: TextStyle(
                 color: Colors.white.withOpacity(0.8),
               ),
@@ -306,26 +736,49 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
       );
 
       if (shouldDelete == true) {
-    setState(() {
-      _isLoading = true;
-    });
-    
+        setState(() {
+          _isLoading = true;
+        });
+
         final userId = FirebaseAuth.instance.currentUser?.uid;
         if (userId != null) {
-          await _firebaseService.deleteMedication(medication['id']);
-          
-          // Refresh the medications list
-          await _loadMedications();
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${medication['name']} deleted successfully'),
-              backgroundColor: AppTheme.successColor,
-            ),
-      );
+          try {
+            await _firebaseService.deleteMedication(medication['id']);
+            debugPrint('✅ Medication deleted successfully');
+
+            // Refresh the medications list
+            await _loadMedications();
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('${medication['name'] ?? 'Medication'} deleted successfully'),
+                backgroundColor: AppTheme.successColor,
+              ),
+            );
+          } catch (deleteError) {
+            debugPrint('Error deleting medication: $deleteError');
+            // Try direct Firestore deletion as fallback
+            try {
+              await FirebaseFirestore.instance
+                  .collection('medications')
+                  .doc(medication['id'])
+                  .delete();
+
+              await _loadMedications();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('${medication['name'] ?? 'Medication'} deleted successfully'),
+                  backgroundColor: AppTheme.successColor,
+                ),
+              );
+            } catch (fallbackError) {
+              throw Exception('Failed to delete medication: $fallbackError');
+            }
+          }
         }
       }
     } catch (e) {
+      debugPrint('Error in _deleteMedication: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error deleting medication: ${e.toString()}'),
@@ -347,8 +800,8 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
           gradient: AppTheme.bgGradient,
         ),
         child: SafeArea(
-                child: Column(
-                  children: [
+          child: Column(
+            children: [
               // Navigation Bar
               Container(
                 margin: const EdgeInsets.all(8),
@@ -395,17 +848,33 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
                         ),
                       ),
                       const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppTheme.primaryColor,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          'Logout',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
+                      GestureDetector(
+                        onTap: () async {
+                          try {
+                            await FirebaseAuth.instance.signOut();
+                            Navigator.of(context).pushReplacementNamed('/login');
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Error logging out: $e'),
+                                backgroundColor: AppTheme.dangerColor,
+                              ),
+                            );
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryColor,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            'Logout',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ),
@@ -650,13 +1119,13 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
                                             Icon(Icons.access_time, color: AppTheme.textTeal),
                                             const SizedBox(width: 8),
                                             Text(
-                                              _selectedTime != null 
+                                              _selectedTime != null
                                                   ? _selectedTime!.format(context)
                                                   : 'Select Time',
                                               style: TextStyle(
                                                 color: _selectedTime != null ? Colors.white : Colors.grey,
-                                    ),
-                                  ),
+                                              ),
+                                            ),
                                 ],
                                         ),
                                       ),
@@ -781,214 +1250,327 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
                     // Saved Medications Tab
                     SingleChildScrollView(
                       padding: const EdgeInsets.all(16),
-                      child: GlassContainer(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(Icons.medication, color: AppTheme.textTeal, size: 20),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Saved Medications',
-                      style: TextStyle(
-                                    fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ],
+                      child: Column(
+                        children: [
+                          ElevatedButton(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => const ScanPrescriptionScreen()),
+                              );
+                            },
+                            child: Text('Scan New Prescription'),
+                          ),
+                          const SizedBox(height: 16),
+
+                          // Test Push Notification Button
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              try {
+                                // Test local notification first
+                                await _notificationService.testNotification();
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: const Text('Local test notification sent! Check your notification tray.'),
+                                      backgroundColor: AppTheme.successColor,
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Local test notification failed: $e'),
+                                      backgroundColor: AppTheme.dangerColor,
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                            icon: Icon(Icons.notifications_active, color: Colors.white),
+                            label: Text('Test Local Notification'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue,
+                              foregroundColor: Colors.white,
                             ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Set reminders for your saved medications',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.7),
-                                fontSize: 14,
-                              ),
-                            ),
-                            const SizedBox(height: 20),
-                            
-                            if (_isLoadingMedications)
-                              const Center(
-                                child: CircularProgressIndicator(),
-                              )
-                            else if (_medications.isEmpty)
-                              Center(
-                                child: Column(
-                                  children: [
-                                    Icon(
-                                      Icons.medication_outlined,
-                                      size: 48,
-                                      color: Colors.white.withOpacity(0.5),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      'No saved medications',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                        color: Colors.white.withOpacity(0.7),
-                                  fontStyle: FontStyle.italic,
-                                ),
-                              ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      'Save medications from the drug screen to set reminders',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Colors.white.withOpacity(0.5),
+                          ),
+
+                          const SizedBox(height: 16),
+
+                          // Debug FCM Status Button
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              try {
+                                final status = await _notificationService.getServiceStatus();
+                                final fcmToken = await FirebaseMessaging.instance.getToken();
+
+                                if (mounted) {
+                                  showDialog(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                      backgroundColor: AppTheme.bgGlassMedium,
+                                      title: Text(
+                                        'FCM & Notification Status',
+                                        style: TextStyle(color: Colors.white),
                                       ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ],
-                                ),
-                              )
-                            else
-                              ..._medications.map((medication) => Container(
-                                margin: const EdgeInsets.only(bottom: 16),
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      AppTheme.bgGlassMedium,
-                                      AppTheme.bgGlassMedium.withOpacity(0.8),
-                                    ],
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                  ),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: Colors.white.withOpacity(0.1)),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.1),
-                                      blurRadius: 8,
-                                      offset: Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(20),
-                                  child: Row(
-                                    children: [
-                                      // Medication Icon
-                                      Container(
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          gradient: LinearGradient(
-                                            colors: [AppTheme.primaryColor, AppTheme.accentColor],
-                                            begin: Alignment.topLeft,
-                                            end: Alignment.bottomRight,
-                                          ),
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                        child: Icon(
-                                          Icons.medication,
-                                          color: Colors.white,
-                                          size: 24,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      
-                                      // Medication Info
-                                      Expanded(
+                                      content: SingleChildScrollView(
                                         child: Column(
                                           crossAxisAlignment: CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
                                           children: [
+                                            Text('Service Initialized: ${status['isInitialized']}', style: TextStyle(color: Colors.white)),
+                                            Text('Has Permissions: ${status['hasPermissions']}', style: TextStyle(color: Colors.white)),
+                                            Text('Pending Notifications: ${status['pendingNotifications']}', style: TextStyle(color: Colors.white)),
+                                            const SizedBox(height: 10),
+                                            Text('FCM Token:', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                                             Text(
-                                              medication['name'] ?? 'Unknown Medication',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                                color: Colors.white,
-                                                fontSize: 18,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Text(
-                                              medication['uses'] ?? 'No uses specified',
-                                              style: TextStyle(
-                                                color: Colors.white.withOpacity(0.8),
-                                                fontSize: 14,
-                                                height: 1.4,
-                                              ),
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
+                                              fcmToken != null ? '${fcmToken.substring(0, 50)}...' : 'No token',
+                                              style: TextStyle(color: Colors.white70, fontSize: 12),
                                             ),
                                           ],
                                         ),
                                       ),
-                                      
-                                      // Action Buttons
-                                      Column(
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(context),
+                                          child: Text('Close', style: TextStyle(color: AppTheme.primaryColor)),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Error checking FCM status: $e'),
+                                      backgroundColor: AppTheme.dangerColor,
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                            icon: Icon(Icons.info_outline, color: Colors.white),
+                            label: Text('Check FCM Status'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+
+                          const SizedBox(height: 16),
+
+                          GlassContainer(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.medication, color: AppTheme.textTeal, size: 20),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Saved Medications',
+                          style: TextStyle(
+                                        fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'Set reminders for your saved medications',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.7),
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const SizedBox(height: 20),
+
+                                if (_isLoadingMedications)
+                                  const Center(
+                                    child: CircularProgressIndicator(),
+                                  )
+                                else if (_medications.isEmpty)
+                                  Center(
+                                    child: Column(
+                                      children: [
+                                        Icon(
+                                          Icons.medication_outlined,
+                                          size: 48,
+                                          color: Colors.white.withOpacity(0.5),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          'No saved medications',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                            color: Colors.white.withOpacity(0.7),
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          'Save medications from the drug screen to set reminders',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.white.withOpacity(0.5),
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                else
+                                  ..._medications.map((medication) => Container(
+                                    margin: const EdgeInsets.only(bottom: 16),
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          AppTheme.bgGlassMedium,
+                                          AppTheme.bgGlassMedium.withOpacity(0.8),
+                                        ],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      ),
+                                      borderRadius: BorderRadius.circular(16),
+                                      border: Border.all(color: Colors.white.withOpacity(0.1)),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.1),
+                                          blurRadius: 8,
+                                          offset: Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(20),
+                                      child: Row(
                                         children: [
-                                          // Set Reminder Button
+                                          // Medication Icon
                                           Container(
+                                            padding: const EdgeInsets.all(12),
                                             decoration: BoxDecoration(
                                               gradient: LinearGradient(
-                                                colors: [AppTheme.accentColor, AppTheme.primaryColor],
+                                                colors: [AppTheme.primaryColor, AppTheme.accentColor],
                                                 begin: Alignment.topLeft,
                                                 end: Alignment.bottomRight,
                                               ),
                                               borderRadius: BorderRadius.circular(12),
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: AppTheme.accentColor.withOpacity(0.3),
-                                                  blurRadius: 8,
-                                                  offset: Offset(0, 4),
+                                            ),
+                                            child: Icon(
+                                              Icons.medication,
+                                              color: Colors.white,
+                                              size: 24,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 16),
+                                          
+                                          // Medication Info
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  medication['name'] ?? medication['drug_name'] ?? 'Unknown Medication',
+                                                  style: TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.white,
+                                                    fontSize: 18,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Text(
+                                                  medication['uses'] ?? medication['description'] ?? medication['indication'] ?? 'No uses specified',
+                                                  style: TextStyle(
+                                                    color: Colors.white.withOpacity(0.8),
+                                                    fontSize: 14,
+                                                    height: 1.4,
+                                                  ),
+                                                  maxLines: 2,
+                                                  overflow: TextOverflow.ellipsis,
                                                 ),
                                               ],
                                             ),
-                                            child: ElevatedButton(
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: Colors.transparent,
-                                                shadowColor: Colors.transparent,
-                                                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                                                shape: RoundedRectangleBorder(
+                                          ),
+                                          
+                                          // Action Buttons
+                                          Column(
+                                            children: [
+                                              // Set Reminder Button
+                                              Container(
+                                                decoration: BoxDecoration(
+                                                  gradient: LinearGradient(
+                                                    colors: [AppTheme.accentColor, AppTheme.primaryColor],
+                                                    begin: Alignment.topLeft,
+                                                    end: Alignment.bottomRight,
+                                                  ),
                                                   borderRadius: BorderRadius.circular(12),
+                                                  boxShadow: [
+                                                    BoxShadow(
+                                                      color: AppTheme.accentColor.withOpacity(0.3),
+                                                      blurRadius: 8,
+                                                      offset: Offset(0, 4),
+                                                    ),
+                                                  ],
                                                 ),
-                                              ),
-                                              onPressed: _isLoading ? null : () => _saveMedicationAsReminder(medication),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Icon(Icons.alarm_add, color: Colors.white, size: 16),
-                                                  const SizedBox(width: 6),
-                                                  Text(
-                                                    'Set Reminder',
-                                                    style: TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 12,
-                                                      fontWeight: FontWeight.w600,
+                                                child: ElevatedButton(
+                                                  style: ElevatedButton.styleFrom(
+                                                    backgroundColor: Colors.transparent,
+                                                    shadowColor: Colors.transparent,
+                                                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                                    shape: RoundedRectangleBorder(
+                                                      borderRadius: BorderRadius.circular(12),
                                                     ),
                                                   ),
-                                                ],
+                                                  onPressed: _isLoading ? null : () => _saveMedicationAsReminder(medication),
+                                                  child: Row(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      Icon(Icons.alarm_add, color: Colors.white, size: 16),
+                                                      const SizedBox(width: 6),
+                                                      Text(
+                                                        'Set Reminder',
+                                                        style: TextStyle(
+                                                          color: Colors.white,
+                                                          fontSize: 12,
+                                                          fontWeight: FontWeight.w600,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
                                               ),
-                                            ),
-                                          ),
-                                          const SizedBox(height: 8),
-                                          // Delete Button
-                                          Container(
-                                            decoration: BoxDecoration(
-                                              color: AppTheme.dangerColor.withOpacity(0.1),
-                                              borderRadius: BorderRadius.circular(12),
-                                              border: Border.all(color: AppTheme.dangerColor.withOpacity(0.3)),
-                                            ),
-                                            child: IconButton(
-                                              onPressed: () => _deleteMedication(medication),
-                                              icon: Icon(
-                                                Icons.delete_outline,
-                                                color: AppTheme.dangerColor,
-                                                size: 20,
+                                              const SizedBox(height: 8),
+                                              // Delete Button
+                                              Container(
+                                                decoration: BoxDecoration(
+                                                  color: AppTheme.dangerColor.withOpacity(0.1),
+                                                  borderRadius: BorderRadius.circular(12),
+                                                  border: Border.all(color: AppTheme.dangerColor.withOpacity(0.3)),
+                                                ),
+                                                child: IconButton(
+                                                  onPressed: () => _deleteMedication(medication),
+                                                  icon: Icon(
+                                                    Icons.delete_outline,
+                                                    color: AppTheme.dangerColor,
+                                                    size: 20,
+                                                  ),
+                                                  tooltip: 'Delete Medication',
+                                                ),
                                               ),
-                                              tooltip: 'Delete Medication',
-                                            ),
+                                            ],
                                           ),
                                         ],
                                       ),
-                                    ],
-                                  ),
-                                ),
-                              )).toList(),
-                          ],
-                        ),
+                                    ),
+                                  )).toList(),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     
@@ -1003,13 +1585,20 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
                               children: [
                                 Icon(Icons.schedule, color: AppTheme.textTeal, size: 20),
                                 const SizedBox(width: 8),
-                                Text(
-                                  'Upcoming Reminders',
-                                            style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
+                                Expanded(
+                                  child: Text(
+                                    'Upcoming Reminders',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
                                   ),
+                                ),
+                                IconButton(
+                                  onPressed: _refreshReminders,
+                                  icon: Icon(Icons.refresh, color: AppTheme.textTeal, size: 20),
+                                  tooltip: 'Refresh and re-schedule notifications',
                                 ),
                               ],
                             ),
@@ -1033,7 +1622,14 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
                                 }
                                 
                                 final reminders = snapshot.data?.docs ?? [];
-                                
+
+                                // Schedule notifications for future reminders
+                                if (reminders.isNotEmpty) {
+                                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                                    _scheduleReminderNotifications(reminders);
+                                  });
+                                }
+
                                 if (reminders.isEmpty) {
                                   return Center(
                                     child: Column(
@@ -1068,8 +1664,14 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
                                 return Column(
                                   children: reminders.map((doc) {
                                     final data = doc.data() as Map<String, dynamic>;
-                                    final dateTime = (data['dateTime'] as Timestamp).toDate();
-                                    final isOverdue = dateTime.isBefore(DateTime.now());
+                                    DateTime? dateTime;
+                                    try {
+                                      dateTime = (data['dateTime'] as Timestamp?)?.toDate();
+                                    } catch (e) {
+                                      debugPrint('Error parsing dateTime: $e');
+                                      dateTime = DateTime.now();
+                                    }
+                                    final isOverdue = dateTime!.isBefore(DateTime.now());
                                     
                                     return Container(
                                       margin: const EdgeInsets.only(bottom: 16),
@@ -1236,11 +1838,11 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
                     ),
                   ],
                 ),
-                          ),
-                  ],
-                ),
               ),
-            ),
+            ],
+          ),
+        ),
+      ),
     );
   }
   
@@ -1269,4 +1871,4 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
         return Icons.alarm;
     }
   }
-} 
+}

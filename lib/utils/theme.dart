@@ -20,6 +20,7 @@ class AppTheme {
   static const Color textPrimary = Color(0xFFE2E8F0);  // Light slate
   static const Color textSecondary = Color(0xFFCBD5E0);  // Muted slate
   static const Color textMuted = Color(0xFF718096);  // Dark slate
+  static const Color textTeal = Color(0xFF14B8A6);  // Teal accent
   
   // Enhanced Gradient and Glass Effects
   static final LinearGradient bgGradient = LinearGradient(
@@ -31,6 +32,18 @@ class AppTheme {
     ],
     stops: [0.1, 0.9],
     transform: const GradientRotation(0.4),  // Slight angle for more dynamism
+  );
+
+  // Light background gradient (subtle white)
+  static final LinearGradient bgGradientLight = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: const [
+      Color(0xFFFFFFFF),
+      Color(0xFFF7FAFC),
+    ],
+    stops: const [0.2, 0.8],
+    transform: const GradientRotation(0.25),
   );
 
   // More Refined Glass Container Decoration
@@ -167,7 +180,7 @@ class AppTheme {
   static const Color bgGlassHeavy = Color(0x1AFFFFFF); // rgba(255,255,255,0.1)
   
   // Text colors - matching web version
-  static const Color textTeal = Color(0xFF14B8A6); // teal-500
+  // static const Color textTeal = Color(0xFF14B8A6); // teal-500 - REMOVED DUPLICATE
   
   // The main theme - matching web version exactly
   static final ThemeData darkTheme = ThemeData(
@@ -254,7 +267,7 @@ class AppTheme {
         color: textTeal,
       ),
     ),
-    cardTheme: CardThemeData(
+    cardTheme: CardTheme(
       color: bgGlassLight,
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -314,7 +327,7 @@ class AppTheme {
       thumbColor: primaryColor,
       overlayColor: primaryColor.withOpacity(0.2),
     ),
-    dialogTheme: DialogThemeData(
+    dialogTheme: DialogTheme(
       backgroundColor: bgDarkSecondary,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
@@ -328,6 +341,35 @@ class AppTheme {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
       ),
+    ),
+  );
+
+  static final ThemeData lightTheme = ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.light,
+    scaffoldBackgroundColor: const Color(0xFFF7FAFC), // slate-50
+    colorScheme: const ColorScheme.light(
+      primary: primaryColor,
+      secondary: accentColor,
+      error: dangerColor,
+      background: Colors.white,
+      surface: Colors.white,
+    ),
+    textTheme: GoogleFonts.interTextTheme(ThemeData.light().textTheme).copyWith(
+      bodyMedium: const TextStyle(color: Color(0xFF334155)), // slate-700
+    ),
+    cardTheme: CardTheme(
+      color: Colors.white.withOpacity(0.7),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: const Color(0xFF0F172A).withOpacity(0.06)),
+      ),
+    ),
+    appBarTheme: const AppBarTheme(
+      backgroundColor: Colors.white,
+      elevation: 0,
+      foregroundColor: Color(0xFF0F172A),
     ),
   );
 
