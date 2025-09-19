@@ -1,6 +1,5 @@
 <<<<<<< HEAD
-# Medigay Flutter App
-
+AIDX
 This is a Flutter version of the Medigay web application, a comprehensive health assistant app with wearable device integration.
 
 ## Features
