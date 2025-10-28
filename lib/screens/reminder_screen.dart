@@ -1389,42 +1389,60 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
                                 ),
                                 const SizedBox(height: 20),
 
-                                if (_isLoadingMedications)
-                                  const Center(
-                                    child: CircularProgressIndicator(),
-                                  )
-                                else if (_medications.isEmpty)
-                                  Center(
-                                    child: Column(
-                                      children: [
-                                        Icon(
-                                          Icons.medication_outlined,
-                                          size: 48,
-                                          color: Colors.white.withOpacity(0.5),
-                                        ),
-                                        const SizedBox(height: 16),
-                                        Text(
-                                          'No saved medications',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                            color: Colors.white.withOpacity(0.7),
-                                      fontStyle: FontStyle.italic,
-                                    ),
+                                StreamBuilder<QuerySnapshot>(
+                                  stream: _firebaseService.getMedicationsStream(
+                                    FirebaseAuth.instance.currentUser?.uid ?? '',
                                   ),
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          'Save medications from the drug screen to set reminders',
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            color: Colors.white.withOpacity(0.5),
-                                          ),
-                                          textAlign: TextAlign.center,
+                                  builder: (context, snapshot) {
+                                    if (snapshot.hasError) {
+                                      return Center(
+                                        child: Text(
+                                          'Error loading medications: ${snapshot.error}',
+                                          style: TextStyle(color: AppTheme.dangerColor),
                                         ),
-                                      ],
-                                    ),
-                                  )
-                                else
-                                  ..._medications.map((medication) => Container(
+                                      );
+                                    }
+                                    if (snapshot.connectionState == ConnectionState.waiting) {
+                                      return const Center(child: CircularProgressIndicator());
+                                    }
+                                    final medsDocs = snapshot.data?.docs ?? [];
+                                    if (medsDocs.isEmpty) {
+                                      return Center(
+                                        child: Column(
+                                          children: [
+                                            Icon(
+                                              Icons.medication_outlined,
+                                              size: 48,
+                                              color: Colors.white.withOpacity(0.5),
+                                            ),
+                                            const SizedBox(height: 16),
+                                            Text(
+                                              'No saved medications',
+                                              style: TextStyle(
+                                                fontSize: 16,
+                                                color: Colors.white.withOpacity(0.7),
+                                                fontStyle: FontStyle.italic,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Text(
+                                              'Save medications from Scan or Drug screen to see them here',
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                color: Colors.white.withOpacity(0.5),
+                                              ),
+                                              textAlign: TextAlign.center,
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    }
+                                    final meds = medsDocs.map((d) => {
+                                      'id': d.id,
+                                      ...((d.data() as Map<String, dynamic>)),
+                                    }).toList();
+                                    return Column(
+                                      children: meds.map((medication) => Container(
                                     margin: const EdgeInsets.only(bottom: 16),
                                     decoration: BoxDecoration(
                                       gradient: LinearGradient(
@@ -1566,7 +1584,10 @@ class _ReminderScreenState extends State<ReminderScreen> with SingleTickerProvid
                                         ],
                                       ),
                                     ),
-                                  )).toList(),
+                                      )).toList(),
+                                    );
+                                  },
+                                ),
                               ],
                             ),
                           ),

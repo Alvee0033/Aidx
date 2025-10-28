@@ -1,0 +1,174 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AIDX — K2-Powered AI Analysis (Speed-Optimized)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    @page { margin: 1in; }
+    body { font-family: "Times New Roman", Times, serif; color: #111; line-height: 1.5; font-size: 12pt; }
+    h1, h2, h3, h4 { font-family: "Times New Roman", Times, serif; color: #111; margin: 0.8em 0 0.4em; }
+    h1 { font-size: 22pt; text-align: center; }
+    h2 { font-size: 16pt; border-bottom: 1px solid #444; padding-bottom: 4px; }
+    h3 { font-size: 13.5pt; }
+    h4 { font-size: 12.5pt; font-style: italic; }
+    p { margin: 0.35em 0 0.7em; }
+    ul { margin: 0.2em 0 0.7em 1.2em; }
+    li { margin: 0.15em 0; }
+    .small { font-size: 10pt; color: #444; }
+    .code { font-family: Consolas, "Courier New", monospace; font-size: 10pt; color: #1a3; }
+    .callout { background: #f6f8fa; border-left: 3px solid #6a7; padding: 10px 12px; margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <h1>AIDX — K2-Powered AI Analysis (Speed-Optimized)</h1>
+
+  <h2>Scope</h2>
+  <p>This document focuses only on AIDX's AI features that will be powered by K2 Think and optimized for speed: (1) Symptom Analysis and (2) Report Analysis (e.g., OCR'd reports such as ECG summaries). Non-AI modules (wearables, reminders, SOS, community, etc.) are out of scope here.</p>
+
+  <h2>Objectives</h2>
+  <ul>
+    <li>Sub-3.0s P50 end-to-end latency for typical symptom queries; P95 ≤ 6.0s (Wi‑Fi).</li>
+    <li>Deterministic, JSON-valid outputs for UI rendering and logging.</li>
+    <li>Maintain medical safety scope: guidance, not diagnosis; clear disclaimers and red‑flag escalation.</li>
+    <li>Minimal token footprint with strict context curation to reduce cost and time.</li>
+  </ul>
+
+  <h2>K2 Integration Plan</h2>
+  <ul>
+    <li>Provider: <strong>K2 Think</strong> model (Stage 1 via HF/web app for exploration; Stage 2 with full API access).</li>
+    <li>Access: Configure <span class="code">K2_API_BASE_URL</span> and <span class="code">K2_API_KEY</span> via secure runtime env/remote config (no hard-coded secrets).</li>
+    <li>Transport: HTTP/2 keep-alive, gzip/brotli compression; enable streaming tokens for responsive UI.</li>
+    <li>SDK: Create <span class="code">lib/services/k2_service.dart</span> as drop-in for current LLM service.</li>
+  </ul>
+
+  <h2>Architecture (AI Path Only)</h2>
+  <ul>
+    <li><strong>Client</strong> (Flutter) → <strong>API Gateway</strong> (optional proxy for key hygiene, caching, geo affinity) → <strong>K2 Inference</strong> → <strong>Client</strong>.</li>
+    <li>Parallelism: Run OCR (if image), vitals fetch, and prompt assembly concurrently; then call K2 once.</li>
+    <li>Streaming: Start rendering preliminary sections (e.g., summary) while full JSON is validated in background.</li>
+    <li>Caching: Content-addressed cache keyed by prompt-hash + model-version + locale.</li>
+  </ul>
+
+  <h2>Prompt Design — Symptom Analysis</h2>
+  <div class="callout">Goal: concise, structured triage with red flags and clear next steps; no diagnostic claims.</div>
+  <ul>
+    <li><strong>System</strong>: “You are a medical guidance assistant. Provide non-diagnostic, safety-first guidance. Use concise, patient-friendly language. Output valid JSON only.”</li>
+    <li><strong>Context</strong> (curated): optional demographics (age range, sex), recent vitals snapshot, and user symptom text.</li>
+    <li><strong>Output schema</strong> (JSON):
+      <pre class="code">{
+  "summary": "string",
+  "triage_level": "self-care | contact-clinic | urgent | emergency",
+  "likely_conditions": [{"name": "string", "rationale": "string"}],
+  "red_flags": ["string"],
+  "next_steps": ["string"],
+  "when_to_seek_care": "string",
+  "advice": ["string"],
+  "references": ["string"],
+  "confidence": 0.0
+}</pre>
+    </li>
+  </ul>
+
+  <h2>Prompt Design — Report Analysis</h2>
+  <div class="callout">Input: OCR'd text or structured values (e.g., ECG summary, BP log). Output: clear interpretation and action guidance.</div>
+  <ul>
+    <li><strong>System</strong>: “You analyze medical reports and produce non-diagnostic, patient-safe interpretations and actions. Output valid JSON only.”</li>
+    <li><strong>Input</strong>: source type (ECG/BP/Lab/Other), extracted text/values, optional vitals snapshot and meds.</li>
+    <li><strong>Output schema</strong> (JSON):
+      <pre class="code">{
+  "summary": "string",
+  "findings": [{"name": "string", "severity": "low|moderate|high", "evidence": "string"}],
+  "anomalies": ["string"],
+  "interpretation": "string",
+  "actions": ["string"],
+  "follow_up": "string",
+  "references": ["string"],
+  "confidence": 0.0
+}</pre>
+    </li>
+  </ul>
+
+  <h2>Speed Optimization Techniques</h2>
+  <ul>
+    <li><strong>Context slimming</strong>: Include only the latest vitals snapshot and essential demographics; strip history unless explicitly requested.</li>
+    <li><strong>Short system prompts</strong>: Enforce JSON mode or function-calling if supported; otherwise a minimal, strict schema instruction.</li>
+    <li><strong>Parallel prework</strong>: OCR, vitals fetch, and input validation run in parallel before the K2 call.</li>
+    <li><strong>Streaming</strong>: Render summary quickly; validate/patch JSON incrementally client-side.</li>
+    <li><strong>Aggressive timeouts</strong>: 4s connect, 10s request; fast retry once with shorter <span class="code">max_tokens</span>.</li>
+    <li><strong>Caching</strong>: Prompt-hash cache with TTL; return cached JSON immediately while refreshing in background.</li>
+    <li><strong>Compression</strong>: Enable gzip/brotli request/response; avoid sending large OCR blocks (summarize first).</li>
+    <li><strong>Tuning</strong>: <span class="code">temperature=0.2</span>, <span class="code">top_p=0.9</span>, constrained <span class="code">max_tokens</span> aligned to schema.</li>
+  </ul>
+
+  <h2>Error Handling & Safety</h2>
+  <ul>
+    <li>JSON validation with schema; on failure, repair via a quick local parser or a lightweight “reformat to JSON” call.</li>
+    <li>Fallback tiers: (1) Full JSON; (2) Minimal triage JSON; (3) Plaintext summary with red flags listed.</li>
+    <li>Guardrails: Red‑flag library on client to augment outputs (e.g., chest pain + dyspnea → urgent).</li>
+    <li>Clear disclaimers: “This is not a diagnosis; seek professional care if concerned.”</li>
+  </ul>
+
+  <h2>API Usage Example (Placeholder)</h2>
+  <p class="small">Adapt the endpoint/fields to the final K2 API once provided in Stage 2.</p>
+  <pre class="code">POST ${K2_API_BASE_URL}/v1/chat/completions
+Authorization: Bearer ${K2_API_KEY}
+Content-Type: application/json
+
+{
+  "model": "k2-think-latest",
+  "response_format": {"type": "json_object"},
+  "temperature": 0.2,
+  "messages": [
+    {"role": "system", "content": "You are a medical guidance assistant... JSON only"},
+    {"role": "user", "content": "{\"age\":\"35\",\"sex\":\"F\",\"symptoms\":\"chest tightness, mild dyspnea for 2h\",\"vitals\":{\"hr\":92,\"spo2\":97}}"}
+  ]
+}</pre>
+
+  <h2>Client Service Skeleton</h2>
+  <p>Introduce <span class="code">lib/services/k2_service.dart</span> with both standard and streaming methods.</p>
+  <pre class="code">class K2Service {
+  final String baseUrl;
+  final String apiKey;
+  final http.Client _client;
+
+  K2Service(this.baseUrl, this.apiKey, [http.Client? client]) : _client = client ?? http.Client();
+
+  Future&lt;Map&lt;String, dynamic&gt;&gt; analyzeSymptoms(SymptomPayload p) async {
+    final body = buildPrompt(p); // minimized context
+    final res = await _client.post(
+      Uri.parse('$baseUrl/v1/chat/completions'),
+      headers: {'Authorization': 'Bearer $apiKey', 'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 10));
+    return ensureJson(res.body);
+  }
+
+  Stream&lt;String&gt; analyzeStream(SymptomPayload p) { /* SSE/stream impl */ }
+}
+</pre>
+
+  <h2>Testing & Benchmarks</h2>
+  <ul>
+    <li>Latency: measure connect, TTFB, time-to-summary, time-to-JSON; targets P50 &lt; 3s, P95 &lt; 6s.</li>
+    <li>Correctness: schema validation, red‑flag coverage tests, unit tests for prompt builders.</li>
+    <li>Load: synthetic batch of common symptom and ECG cases; monitor error rates and retries.</li>
+  </ul>
+
+  <h2>Security & Privacy</h2>
+  <ul>
+    <li>Minimize PHI; redact identifiers before transit; encrypt at rest; no logging of raw prompts on client.</li>
+    <li>Rotate API keys; scope keys to server proxy when possible; enable rate limiting.</li>
+    <li>Consent: clear in‑app notice that AI guidance is informational and not a diagnosis.</li>
+  </ul>
+
+  <h2>Deliverables Mapping (Hackathon)</h2>
+  <ul>
+    <li><strong>Working demo</strong>: Symptom Analysis and Report Analysis wired to K2 with streaming UI and JSON rendering.</li>
+    <li><strong>3‑min deck</strong>: latency charts, architecture, and safety approach.</li>
+    <li><strong>Tech notes</strong>: this document + config snippets; benchmarks table.</li>
+  </ul>
+
+  <p class="small">Related files: <span class="code">docs/AIDX_Features_Only.html</span>, <span class="code">docs/AIDX_Hackathon_Report.html</span>. Proposed additions: <span class="code">lib/services/k2_service.dart</span>, <span class="code">lib/screens/ai_symptom_screen.dart</span> updates to use K2 service.</p>
+</body>
+</html>

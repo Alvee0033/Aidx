@@ -8,6 +8,7 @@ import '../utils/responsive.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -83,42 +84,23 @@ class _CommunityFacebookScreenState extends State<CommunityFacebookScreen>
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) throw Exception('User not authenticated');
 
-      String? imageUrl;
+      // Build Base64 image payload (Firestore) instead of Storage URL
+      String? imageUrl; // keep null when using base64
+      String? imageBase64;
       if (_selectedImage != null) {
-        try {
-          // Upload image to Firebase Storage
-          final bytes = _selectedImageBytes ?? await _selectedImage!.readAsBytes();
-          final fileName = '${DateTime.now().millisecondsSinceEpoch}_${_selectedImage!.name}';
-          final storageRef = FirebaseStorage.instance
-              .ref()
-              .child('community_posts/$fileName');
+        final bytes = _selectedImageBytes ?? await _selectedImage!.readAsBytes();
+        // Detect mime type from extension
+        String contentType = 'image/jpeg';
+        final nameLower = _selectedImage!.name.toLowerCase();
+        if (nameLower.endsWith('.png')) contentType = 'image/png';
+        if (nameLower.endsWith('.webp')) contentType = 'image/webp';
 
-          // Detect mime type from extension
-          String contentType = 'image/jpeg';
-          final nameLower = _selectedImage!.name.toLowerCase();
-          if (nameLower.endsWith('.png')) contentType = 'image/png';
-          if (nameLower.endsWith('.webp')) contentType = 'image/webp';
-          final metadata = SettableMetadata(contentType: contentType);
-          final uploadTask = storageRef.putData(bytes, metadata);
-          uploadTask.snapshotEvents.listen((s) {
-            if (s.totalBytes > 0) {
-              setState(() {
-                _uploadProgress = s.bytesTransferred / s.totalBytes;
-              });
-            }
-          });
-          final snapshot = await uploadTask;
-          imageUrl = await snapshot.ref.getDownloadURL();
-        } catch (e) {
-          debugPrint('❌ Firebase Storage upload failed: $e');
-          // Continue without image if upload fails
-          imageUrl = null;
-          if (e.toString().contains('object-not-found') || e.toString().contains('permission-denied')) {
-            _showSnackBar('⚠️ Storage rules need setup. Posted text only.');
-          } else {
-            _showSnackBar('❌ Image upload failed, posting text only');
-          }
+        // Light size guard for Firestore 1MB limit (base64 ~ 1.33x). Aim < 700KB raw
+        if (bytes.lengthInBytes > 700 * 1024) {
+          _showSnackBar('⚠️ Image is large; consider a smaller photo for faster posting.');
         }
+        final encoded = base64Encode(bytes);
+        imageBase64 = 'data:$contentType;base64,$encoded';
       }
 
       final post = CommunityPostModel(
@@ -128,6 +110,7 @@ class _CommunityFacebookScreenState extends State<CommunityFacebookScreen>
         userLocation: 'Health Community',
         content: _postController.text.trim(),
         imageUrl: imageUrl,
+        imageBase64: imageBase64,
         category: _selectedCategory,
         timestamp: DateTime.now(),
         tags: _extractTags(_postController.text),
@@ -601,6 +584,10 @@ class _CommunityFacebookScreenState extends State<CommunityFacebookScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (post.imageBase64 != null && post.imageBase64!.isNotEmpty)
+            const SizedBox(height: 0) // ensure layout spacing is consistent
+          else if (post.imageUrl != null && post.imageUrl!.isNotEmpty)
+            const SizedBox(height: 0),
           // Post header
           Padding(
             padding: const EdgeInsets.all(16),
@@ -728,7 +715,31 @@ class _CommunityFacebookScreenState extends State<CommunityFacebookScreen>
               ),
             ),
           // Post image
-          if (post.imageUrl != null && post.imageUrl!.isNotEmpty)
+          if (post.imageBase64 != null && post.imageBase64!.isNotEmpty)
+            Container(
+              width: double.infinity,
+              height: 200,
+              margin: const EdgeInsets.only(top: 12),
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                child: Image.memory(
+                  _decodeBase64Image(post.imageBase64!),
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    debugPrint('Error decoding base64 image: $error');
+                    return Container(
+                      color: AppTheme.bgGlassMedium,
+                      child: Icon(
+                        FeatherIcons.image,
+                        color: AppTheme.textMuted,
+                        size: 40,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            )
+          else if (post.imageUrl != null && post.imageUrl!.isNotEmpty)
             Container(
               width: double.infinity,
               height: 200,
@@ -876,6 +887,18 @@ class _CommunityFacebookScreenState extends State<CommunityFacebookScreen>
         ],
       ),
     );
+  }
+
+  // Helper: decode data URI base64 into bytes
+  Uint8List _decodeBase64Image(String dataUri) {
+    try {
+      final commaIndex = dataUri.indexOf(',');
+      final base64Part = commaIndex != -1 ? dataUri.substring(commaIndex + 1) : dataUri;
+      return base64Decode(base64Part);
+    } catch (e) {
+      debugPrint('Failed to decode base64 image: $e');
+      return Uint8List(0);
+    }
   }
 
   Widget _buildComment(CommunityCommentModel comment) {

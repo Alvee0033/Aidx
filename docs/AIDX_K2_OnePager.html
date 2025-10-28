@@ -1,0 +1,96 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AIDX — K2 Think Hackathon One‑Pager + Team Info</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    @page { margin: 0.45in; size: A4; }
+    body { font-family: "Times New Roman", Times, serif; color: #111; line-height: 1.32; font-size: 10.8pt; }
+    h1, h2, h3, h4 { margin: 0.4em 0 0.25em; }
+    h1 { font-size: 15.5pt; text-align: center; color: #0F4C81; }
+    h2 { font-size: 11.5pt; padding-bottom: 1px; color: #334155; border-bottom: 1px solid #cbd5e1; }
+    h3 { font-size: 11pt; color: #475569; }
+    p { margin: 0.12em 0 0.35em; }
+    ul { margin: 0.08em 0 0.32em 0.9em; }
+    li { margin: 0.03em 0; }
+    .small { font-size: 10pt; color: #444; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .box { border: 1px solid #ddd; padding: 5px 7px; }
+    .muted { color: #444; }
+    .mono { font-family: Consolas, "Courier New", monospace; font-size: 10pt; }
+    .break { page-break-before: always; }
+    .label { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>AI‑Powered Medical Symptom & Medical Report Analysis</h1>
+
+  <h3>1) Problem & User</h3>
+  <p>When people feel unwell, they need fast, reliable guidance—“Is this serious, and what should I do next?” Today, they juggle general‑purpose chatbots, symptom checkers, wearables, and search results that disagree, are slow, or lack clinical framing. Confusion leads to delayed care and avoidable ER visits. Target users: (a) students and busy professionals seeking quick triage, (b) caregivers interpreting others’ symptoms and reports, and (c) patients managing chronic conditions who routinely receive ECG/BP/lab summaries but struggle to interpret them. Pain points: ambiguous answers, mobile‑network latency, and weak red‑flag escalation. Urgency is highest when symptoms evolve rapidly (e.g., chest tightness, dyspnea) or new report findings lack context. AIDX focuses on two high‑value tasks—Symptom Analysis and Report Analysis—returning concise, non‑diagnostic guidance with clear next steps and safety guardrails. With K2 Think’s speed and reasoning, we target sub‑3‑second guidance that users can trust while minimizing PHI and preserving privacy.</p>
+
+  <h3>2) What We’ll Build</h3>
+  <p>
+    We’ll ship a K2‑powered Symptom Analysis and Report Analysis experience with streaming responses and JSON‑structured outputs. User flow: (1) user enters symptoms or uploads a symptom photo (e.g., skin rash) or a medical report image; (2) optional vitals/demographics are added; (3) client assembles a minimal prompt; (4) K2 returns structured guidance we render instantly.
+    Core: concise summary, triage level, red flags, next steps, and confidence. Report Analysis (ECG/BP/Lab text) adds findings, anomalies, interpretation, and actions.
+    Stack: Flutter client (Android/iOS/Web), optional Firebase for auth/history, on‑device OCR (ML Kit) for report text, and a thin proxy for K2 API key hygiene. Speed tactics: parallel OCR/vitals/prompt build, streaming tokens, prompt hashing cache, tight timeouts (10s), gzip/brotli, temperature 0.2.
+    Reliability: schema validation and graceful fallbacks (minimal JSON or plaintext summary), client red‑flag library, and clear disclaimers. Privacy: PHI minimization and redactors. 
+  </p>
+
+  <h3>3) Why K2 Think</h3>
+  <p>K2 Think pairs high token throughput with strong mathematical/analytical reasoning and reliable JSON formatting, enabling sub‑3‑second streaming summaries, structured triage, and precise report interpretations on mobile. Early access, mentorship, and the 48‑hour build enable prompt refinement, latency tuning, and guardrails for real‑world impact.</p>
+  <h3>4) Demo</h3>
+  <p>Live demo: type symptoms or scan a report to see an immediate, streaming summary with triage level, red flags, and next steps. Judges can vary inputs freely; a small metrics overlay shows latency and token use. Includes basic history, privacy toggles, and a clear offline mode with sample cases.</p>
+
+
+  
+
+  <h2>Part B — Team Info</h2>
+  <div class="box">
+    <p><span class="label">Team name:</span> DevLoop</p>
+    <p><span class="label">Main contact number:</span> +8801930713998</p>
+    <p><span class="label">Contact email:</span> morsalinislamalvy@gmail.com</p>
+  </div>
+
+  <h3>Members (attach short CVs)</h3>
+  <div class="grid2">
+    <div class="box">
+      <p><span class="label">Name:</span> Morsalin Islam Alvy</p>
+      <p><span class="label">Role:</span> Developer / ML Engineer</p>
+      <p class="muted small">Bio: K2/LLM integration, Flutter, streaming UX, JSON validation.</p>
+      
+    </div>
+    <div class="box">
+      <p><span class="label">Name:</span> Md . Mofasel</p>
+      <p><span class="label">Role:</span> PM / UX</p>
+      <p class="muted small">Bio: clinical copy, flows, guardrails, user testing, sprint ops.</p>
+      
+    </div>
+    <div class="box">
+      <p><span class="label">Name:</span> MD Iftekar Hossain</p>
+      <p><span class="label">Role:</span> Mobile Engineer</p>
+      <p class="muted small">Bio: Flutter, OCR, caching, metrics overlay, CI.</p>
+      
+    </div>
+  </div>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

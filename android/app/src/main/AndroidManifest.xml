@@ -111,6 +111,14 @@
             android:exported="false"
             android:stopWithTask="false" />
             
+        <!-- Flutter Background Service -->
+        <service
+            android:name="id.flutter.flutter_background_service.BackgroundService"
+            android:exported="true"
+            android:foregroundServiceType="health"
+            android:stopWithTask="false"
+            tools:replace="android:exported" />
+            
         <!-- Boot receiver for auto-start -->
         <receiver
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"

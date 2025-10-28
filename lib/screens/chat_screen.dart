@@ -70,6 +70,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
   bool _pendingAutoListen = false;
   String? _currentListenSessionId;
   bool _inputHandledForSession = false;
+  // Guard to prevent overlapping SpeechToText.start calls on Web/Chrome
+  bool _isStartingListen = false;
   
   // Conversation context
   String _conversationContext = '';
@@ -356,16 +358,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
       stt.LocaleName? chosen;
       for (final loc in locales) {
         final id = loc.localeId.toLowerCase();
-        if (id == 'en_in') {
+        if (id == 'en_in' || id == 'en-in') {
           chosen = loc;
           break;
         }
       }
-      chosen ??= locales.firstWhere((l) => l.localeId.toLowerCase() == 'en_gb', orElse: () => stt.LocaleName('en_US', 'English'));
+      chosen ??= locales.firstWhere((l) =>
+          l.localeId.toLowerCase() == 'en_gb' || l.localeId.toLowerCase() == 'en-gb',
+          orElse: () => stt.LocaleName(kIsWeb ? 'en-US' : 'en_US', 'English'));
       chosen ??= locales.firstWhere((l) => l.localeId.toLowerCase().startsWith('en'), orElse: () => locales.first);
-      _preferredLocaleId = chosen.localeId;
+      // Normalize to BCP-47 with dash for Web (Chrome), underscores for mobile/native
+      final rawId = chosen.localeId;
+      _preferredLocaleId = kIsWeb ? rawId.replaceAll('_', '-') : rawId.replaceAll('-', '_');
     } catch (_) {
-      _preferredLocaleId = 'en_US';
+      _preferredLocaleId = kIsWeb ? 'en-US' : 'en_US';
     }
   }
 
@@ -785,7 +791,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
 
   void _onTtsComplete() {
     setState(() => _isSpeaking = false);
-    if (_canListen() && !_isPaused) _listen();
+    // Avoid re-entrant start while a start is in progress or recognizer is already active
+    if (_canListen() && !_isPaused && !_isStartingListen && !(_speech.isListening)) {
+      _listen();
+    }
   }
 
   // Method to change voice settings
@@ -927,6 +936,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
   }
 
   Future<void> _listen() async {
+    if (_isStartingListen) return; // Prevent concurrent starts
     if (!_canListen()) {
       if (!_isConnected) {
         setState(() {
@@ -942,10 +952,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     // Check if we need to reset before starting
     await _checkAndResetIfNeeded();
 
-    // Always reset before starting
-    await _resetSpeechRecognizer();
+    // If already listening according to plugin, avoid starting again
+    if (_speech.isListening || _isListening) return;
 
-    if (_isListening) return;
+    // Always reset before starting, then add a tiny debounce to let browser settle
+    await _resetSpeechRecognizer();
+    await Future.delayed(const Duration(milliseconds: 120));
+
+    if (_isListening || _speech.isListening) return;
 
     // Increment session count and start session tracking
     _sessionCount++;
@@ -973,11 +987,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
     bool allowLongListen = true; // For clarity
 
     try {
+      _isStartingListen = true;
     bool available = await _speech.initialize(
       onStatus: (status) async {
           if (debugMode) debugPrint('Speech status: $status');
         // Ignore stale callbacks from previous sessions
         if (sessionId != _currentListenSessionId) return;
+          if (status == 'listening') {
+            if (mounted) {
+              setState(() => _isListening = true);
+            }
+            return;
+          }
         if (status == 'notListening' && !_isSpeaking && !_isProcessing && !_isResetting) {
           setState(() => _isListening = false);
           if (!_inputHandledForSession && !resultHandled && _liveTranscript.isNotEmpty) {
@@ -992,7 +1013,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
             _pendingAutoListen = true;
             Future.delayed(Duration(milliseconds: 900), () {
               _pendingAutoListen = false;
-              if (_canListen()) _listen();
+                if (_canListen() && !_isStartingListen && !(_speech.isListening)) _listen();
             });
           }
         }
@@ -1012,7 +1033,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
             }
             if (_canListen()) {
               Future.delayed(Duration(seconds: 1), () {
-                if (_canListen()) _listen();
+                if (_canListen() && !_isStartingListen && !(_speech.isListening)) _listen();
               });
             }
         } else {
@@ -1099,6 +1120,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin, 
       });
       _checkAndResetIfNeeded();
       _showErrorDialog(_errorMsg!);
+    } finally {
+      _isStartingListen = false;
     }
   }
 

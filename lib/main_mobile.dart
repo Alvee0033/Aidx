@@ -42,11 +42,7 @@ void main() async {
   await Firebase.initializeApp();
   
   // Initialize timezone
-  try {
-    // tz.initializeTimeZones(); // Method not available in this version
-  } catch (e) {
-    print('Timezone initialization failed: $e');
-  }
+  tz.initializeTimeZones();
   
   runApp(MyApp());
 }
@@ -134,8 +130,8 @@ class _HomeScreenState extends State<HomeScreen> {
       await FlutterBackgroundService().configure(
         androidConfiguration: AndroidConfiguration(
           onStart: onStart,
-          autoStart: true, // Re-enable auto-start
-          isForegroundMode: true, // Re-enable foreground mode with proper service type
+          autoStart: true,
+          isForegroundMode: true,
           notificationChannelId: 'aidx_foreground',
           initialNotificationTitle: 'AIDX Medical Assistant',
           initialNotificationContent: 'Monitoring your health',
@@ -160,7 +156,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
   }
-
+  
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -171,9 +167,9 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: _isLoading
           ? Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
                   SpinKitFadingCircle(
                     color: Colors.blue,
                     size: 50.0,
@@ -182,9 +178,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   Text(
                     _status,
                     style: TextStyle(fontSize: 16),
+                  ),
+                ],
               ),
-            ],
-          ),
             )
           : _buildMainContent(),
     );
@@ -228,11 +224,11 @@ class _HomeScreenState extends State<HomeScreen> {
               style: TextStyle(fontSize: 16, color: Colors.grey[600]),
             ),
           ],
-              ),
-            ),
-          );
-        }
-
+        ),
+      ),
+    );
+  }
+  
   Widget _buildFeatureGrid() {
     final features = [
       {'title': 'Health Monitoring', 'icon': Icons.favorite, 'color': Colors.red},
@@ -353,11 +349,11 @@ void onStart(ServiceInstance service) async {
   });
   
   service.on('setAsForeground').listen((event) {
-    // service.setAsForegroundService(); // Method not available in this version
+    service.setAsForegroundService();
   });
   
   service.on('setAsBackground').listen((event) {
-    // service.setAsBackgroundService(); // Method not available in this version
+    service.setAsBackgroundService();
   });
 }
 
@@ -365,3 +361,4 @@ void onStart(ServiceInstance service) async {
 Future<bool> onIosBackground(ServiceInstance service) async {
   return true;
 }
+

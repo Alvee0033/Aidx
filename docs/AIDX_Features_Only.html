@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AIDX Medical Assistant — Features and Technical Report</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    @page { margin: 1in; }
+    body { font-family: "Times New Roman", Times, serif; color: #111; line-height: 1.5; font-size: 12pt; }
+    h1, h2, h3, h4 { font-family: "Times New Roman", Times, serif; color: #111; margin: 0.8em 0 0.35em; }
+    h1 { font-size: 22pt; text-align: center; }
+    h2 { font-size: 15pt; border-bottom: 1px solid #444; padding-bottom: 4px; }
+    h3 { font-size: 13pt; }
+    h4 { font-size: 12.5pt; font-style: italic; }
+    p { margin: 0.2em 0 0.8em; }
+    ul { margin: 0.2em 0 0.8em 1.2em; }
+    li { margin: 0.1em 0; }
+    .subtitle { text-align: center; color: #333; margin-top: 0.4em; }
+    .kv { margin: 0.15em 0; }
+
+    /* Color palette aligned with dashboard feel */
+    :root {
+      --warn: #e67e22;      /* orange */
+      --accent: #16a085;    /* teal */
+      --primary: #2e86de;   /* blue */
+      --danger: #e74c3c;    /* red */
+      --info: #5dade2;      /* light blue */
+      --success: #27ae60;   /* green */
+      --violet: #8e44ad;    /* violet */
+    }
+    .h3-title { font-weight: bold; }
+    .c-warn   { color: var(--warn); border-left: 6px solid var(--warn); padding-left: 10px; }
+    .c-accent { color: var(--accent); border-left: 6px solid var(--accent); padding-left: 10px; }
+    .c-primary{ color: var(--primary); border-left: 6px solid var(--primary); padding-left: 10px; }
+    .c-danger { color: var(--danger); border-left: 6px solid var(--danger); padding-left: 10px; }
+    .c-info   { color: var(--info); border-left: 6px solid var(--info); padding-left: 10px; }
+    .c-success{ color: var(--success); border-left: 6px solid var(--success); padding-left: 10px; }
+    .c-violet { color: var(--violet); border-left: 6px solid var(--violet); padding-left: 10px; }
+    .label { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>AIDX Medical Assistant: Features and Technical Report</h1>
+  
+
+  <h2>Abstract</h2>
+  <p>AIDX is a cross‑platform mHealth companion that unifies AI‑assisted symptom analysis (with report analyzer and Medline cross‑checks), wearable vitals, medication reminders with prescription scanning, emergency SOS with auto‑dispatch and fall detection, and community support. The app emphasizes concise guidance, privacy‑respecting defaults, and graceful fallbacks when permissions or connectivity are limited.</p>
+
+  <h2>Problem Statement</h2>
+  <p>When you feel unwell, the real question is simple: “Is this serious, and what should I do now?” Most people bounce between search results, forums, a wearable app, a separate reminder app, and maps for nearby care—losing time and confidence along the way. First and foremost, users need rapid, trustworthy <strong>Symptom Analysis AI</strong> that gives clear next steps in plain language. They also need that guidance connected to the rest of their health life: live vitals from their watch, easy prescription scanning to set reminders, quick access to hospitals or pharmacies, and one‑tap SOS with fall detection when things look urgent. AIDX brings these parts together so help is fast, consistent, and actionable—reducing anxiety, missed doses, and delays in getting the right care.</p>
+
+  <h2>1. Introduction</h2>
+  <ul>
+    <li><span class="label">Purpose:</span> AIDX is a cross‑platform mHealth companion that combines AI guidance, wearable vitals, medication adherence, emergency support, and community features into one coherent experience.</li>
+    <li><span class="label">Scope:</span> Everyday health tasks—triage of new symptoms, understanding medications, staying on schedule, monitoring vitals, and accessing care quickly when needed.</li>
+    <li><span class="label">Audience:</span> Health‑conscious individuals, caregivers, and early adopters of wearables seeking actionable, privacy‑respecting tools.</li>
+    <li><span class="label">Differentiators:</span> Medical‑only AI prompts, optional inclusion of live vitals in analyses, auto‑SOS with fall detection, and a shareable Health ID for emergencies.</li>
+    <li><span class="label">Constraints:</span> Designed for real‑world use—works with permission fallbacks, shows clear offline states, and keeps guidance concise to avoid overload.</li>
+  </ul>
+
+  <h2>2. Features (Dashboard Order)</h2>
+
+  <h3 class="h3-title c-warn">1) <strong>AI Symptoms Analysis</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Guides users through symptom entry and returns concise analysis with likely conditions, severity, and clear next steps.</li>
+    <li><span class="label">Inputs:</span> Text description, intensity (mild/moderate/severe), duration, optional age/gender, optional photo.</li>
+    <li><span class="label">Smart context:</span> Option to auto‑fill demographics from Health ID and include latest wearable vitals for richer triage.</li>
+    <li><span class="label">Outputs:</span> Short assessment plus practical self‑care measures or escalation cues when appropriate.</li>
+    <li><span class="label">Medline cross‑check:</span> When available, AI findings are cross‑checked against trusted Medline/MedlinePlus references to reinforce accuracy and provide reputable reading links.</li>
+    <li><span class="label">Sub‑feature – Report Analyzer:</span> Accepts a brief description and/or a photo of a medical report (e.g., ECG, lab sheet), validates image size/format, and summarizes key findings in plain language.</li>
+    <li><span class="label">History:</span> Saves prior analyses for quick reference and trend awareness.</li>
+    <li><span class="label">User flow:</span> Describe symptoms → optionally attach image → toggle vitals/Health ID → get concise guidance → save or share.</li>
+    <li><span class="label">Notes:</span> Prompts stay medical‑only; if confidence is low, guidance is conservative and encourages professional follow‑up.</li>
+  </ul>
+
+  <h3 class="h3-title c-accent">2) <strong>AI Voice Chat</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Medical‑only conversational assistant for quick questions about symptoms, prevention, and self‑care.</li>
+    <li><span class="label">Tone:</span> Short, clear, and practical responses focused on safe, actionable guidance.</li>
+    <li><span class="label">Typical asks:</span> Headache concerns, sprain care, fasting prep, when to see a clinician.</li>
+    <li><span class="label">Privacy:</span> Designed to avoid collecting unnecessary data; avoid sharing sensitive identifiers in free‑text.</li>
+  </ul>
+
+  <h3 class="h3-title c-success">3) <strong>Drug Info</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Quick lookups for medications—uses, common side effects, and key precautions.</li>
+    <li><span class="label">Value:</span> Helps users understand prescriptions and set expectations for typical reactions.</li>
+    <li><span class="label">Notes:</span> Not a substitute for clinician dosing; always follow your prescriber’s instructions.</li>
+  </ul>
+
+  <h3 class="h3-title c-danger">4) <strong>Hospital Finder</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Nearby hospitals/ERs with distance, directions, and contact options.</li>
+    <li><span class="label">Key actions:</span> One‑tap navigation and call to facility.</li>
+    <li><span class="label">Permissions:</span> Requires location permission for accurate results; falls back to manual search if denied.</li>
+  </ul>
+
+  <h3 class="h3-title c-success">5) <strong>Doctor &amp; Pharmacy</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Lists clinics, practitioners, and pharmacies close by.</li>
+    <li><span class="label">Key actions:</span> Call, navigate, review basic availability when provided.</li>
+    <li><span class="label">Notes:</span> Filters differ by region; availability depends on provider data sources.</li>
+  </ul>
+
+  <h3 class="h3-title c-danger">6) <strong>Blood Donation</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Donation basics, eligibility reminders, and pointers to nearby drives/centers.</li>
+    <li><span class="label">Live GPS &amp; City:</span> Auto‑detects current location to suggest nearby donation points; users can also select a city manually if GPS is off.</li>
+    <li><span class="label">Blood Group Selection:</span> Filter or post requests by blood group (e.g., A+, O‑, AB+), making matching faster and more accurate.</li>
+    <li><span class="label">Direct Messages (DM):</span> Allow requesters and donors to connect via in‑app DM or configured channels (e.g., phone/Telegram) with opt‑in contact sharing.</li>
+    <li><span class="label">Extras:</span> Share campaigns and review preparation tips.</li>
+    <li><span class="label">Safety:</span> Promotes official guidelines; defers medical eligibility questions to certified centers.</li>
+  </ul>
+
+  <h3 class="h3-title c-accent">7) <strong>Medication Reminder</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Schedules alerts and prompts for intake confirmation to support adherence.</li>
+    <li><span class="label">Flow:</span> Add medicine/time → receive notification → mark taken → optional history; supports snooze and missed‑dose catch‑up.</li>
+    <li><span class="label">Prescription Scan:</span> Capture or upload a prescription; OCR extracts medicine names, strengths, and frequencies to pre‑fill reminders for user review before saving.</li>
+    <li><span class="label">Quiet hours:</span> Optional setting to suppress non‑critical alerts during sleep windows.</li>
+  </ul>
+
+  <h3 class="h3-title c-success">8) <strong>Medical Timeline</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Chronological view of vitals, reminders, symptom analyses, and notes.</li>
+    <li><span class="label">Filters:</span> Show/hide event types; jump to dates; highlight anomalies.</li>
+    <li><span class="label">Benefits:</span> Gives context across days/weeks for better decisions and follow‑ups.</li>
+  </ul>
+
+  <h3 class="h3-title c-primary">9) <strong>Wearable Tracker</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Connects to compatible smartwatches to display live heart rate, SpO₂, BP (where available), temperature, and steps.</li>
+    <li><span class="label">Experience:</span> Scan → connect → see vitals and connection status; auto‑reconnect reduces drop‑offs.</li>
+    <li><span class="label">Battery:</span> Shows watch battery where available; gentle polling to conserve power.</li>
+  </ul>
+
+  <h3 class="h3-title c-danger">10) <strong>Emergency SOS</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> One‑tap access to emergency help; can warn when vitals are consistently outside safe bounds.</li>
+    <li><span class="label">Actions:</span> Trigger SOS, see local emergency number, optionally notify contacts; cancel within a short countdown to prevent false alarms.</li>
+    <li><span class="label">Thresholds:</span> Monitors HR and SpO₂ against safe limits over a sustained window before escalating (e.g., HR &gt; 180 BPM or SpO₂ &lt; 85% for ~30s).</li>
+    <li><span class="label">Auto‑SOS (Vitals):</span> When abnormal vitals persist past the timer, the app starts an SOS countdown and can auto‑dispatch if the user does not cancel.</li>
+    <li><span class="label">Fall Detection:</span> Integrates with device sensors and wearables to detect strong impacts and immobility; prompts the user and can auto‑start SOS if unresponsive.</li>
+    <li><span class="label">Location &amp; share:</span> Optionally attach current location and Health ID summary when contacting trusted numbers or channels.</li>
+  </ul>
+
+  <h3 class="h3-title c-info">11) <strong>Health ID</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Compact, shareable health profile; optional QR for quick access in urgent situations.</li>
+    <li><span class="label">Contents:</span> Identity, allergies, conditions, emergency contacts, and other essentials.</li>
+    <li><span class="label">Control:</span> User chooses what to include/exclude before sharing; QR can be regenerated.</li>
+  </ul>
+
+  <h3 class="h3-title c-success">12) <strong>Health Habits</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Tracks daily wellness habits (hydration, movement, mindfulness, sleep proxies).</li>
+    <li><span class="label">Motivation:</span> Streaks, simple badges, and gentle nudges to build consistency.</li>
+    <li><span class="label">Flexibility:</span> Editable targets and reminders; skip days without breaking long‑term progress visibility.</li>
+  </ul>
+
+  <h3 class="h3-title c-violet">13) <strong>Sleep &amp; Fall Detect</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Highlights sleep patterns and potential fall events using sensors and optional wearable signals.</li>
+    <li><span class="label">Value:</span> Increases awareness of rest quality and personal safety incidents.</li>
+    <li><span class="label">Notes:</span> False positives are possible; users can dismiss/confirm events to improve future sensitivity.</li>
+  </ul>
+
+  <h3 class="h3-title c-success">14) <strong>Community Support</strong></h3>
+  <ul>
+    <li><span class="label">Overview:</span> Safe space for peer support—share experiences, tips, and encouragement.</li>
+    <li><span class="label">Benefits:</span> Social reinforcement and lived‑experience insights.</li>
+  </ul>
+
+  <h2>3. Technology Used</h2>
+  <ul>
+    <li><span class="label">Frontend:</span> Flutter (Dart) with Material components, custom theme, responsive layouts; Times New Roman for print‑ready docs.</li>
+    <li><span class="label">Backend/Cloud:</span> Firebase Auth, Firestore (documents/collections), Cloud Storage; optional indices initialization utilities.</li>
+    <li><span class="label">AI &amp; ML:</span> Custom LLM API integration for chat, symptom and report analysis; Google ML Kit Text Recognition for OCR of prescriptions/reports.</li>
+    <li><span class="label">Wearables &amp; Sensors:</span> BLE smartwatch services (Heart Rate, SpO₂, BP, Battery, Thermometer, Fitness); platform channel for live vitals; device sensors via sensors_plus.</li>
+    <li><span class="label">Media &amp; Realtime:</span> Camera/image picker for capture/upload; WebRTC scaffolding for AI video calls (signaling backend pluggable).</li>
+    <li><span class="label">Notifications &amp; Background:</span> Firebase Cloud Messaging + flutter_local_notifications; background service hooks for monitoring/alerts.</li>
+    <li><span class="label">Utilities:</span> Provider state management, shared_preferences, url_launcher, qr_flutter, syncfusion charts (for trends).</li>
+  </ul>
+
+  <h2>4. Architecture Overview</h2>
+  <ul>
+    <li><span class="label">UI Layer:</span> Screens and widgets for dashboard, features, and dialogs; Provider for lightweight state.</li>
+    <li><span class="label">Services Layer:</span> AI (LLM API), Wearable (BLE + platform channel), Firebase (Auth/DB), Notifications, Background, Places.</li>
+    <li><span class="label">Data Layer:</span> Firestore collections (users, health_data, medications, reminders, symptoms, reports, community); indices/seed docs to stabilize queries.</li>
+    <li><span class="label">Data flow:</span> Device/user input → services → provider state → UI; optional persistence to Firestore and history views.</li>
+  </ul>
+
+  <h2>5. Security &amp; Privacy</h2>
+  <ul>
+    <li><span class="label">Authentication:</span> Firebase Auth with per‑user access in Firestore via rules.</li>
+    <li><span class="label">Least data:</span> Only the minimum needed for each task; explicit permission gates for camera, Bluetooth, notifications, location.</li>
+    <li><span class="label">Secrets hygiene:</span> Prefer runtime configuration or secure storage; avoid hard‑coding API keys.</li>
+    <li><span class="label">User control:</span> Share settings for Health ID; quiet hours for reminders; SOS countdown to prevent false dispatches.</li>
+  </ul>
+
+  <h2>6. Limitations &amp; Risks</h2>
+  <ul>
+    <li><span class="label">Device variability:</span> BLE characteristics and performance differ across watches; provide graceful fallbacks.</li>
+    <li><span class="label">AI uncertainty:</span> Model outputs can be imperfect; design emphasizes brevity, caution, and encouragement to seek care when unsure.</li>
+    <li><span class="label">Permissions:</span> Features depend on user consent; manual flows should remain available when permissions are denied.</li>
+    <li><span class="label">Connectivity:</span> Some features need internet (AI, maps, cloud); show clear offline states and retries.</li>
+  </ul>
+
+  <h2>7. Roadmap</h2>
+  <ul>
+    <li><span class="label">Signaling backend:</span> Production WebRTC signaling for AI video calls and live annotations.</li>
+    <li><span class="label">Deeper medication intelligence:</span> Interaction checks, duplication warnings, refill reminders.</li>
+    <li><span class="label">Expanded wearables:</span> Broader device matrices, proprietary characteristics mapping, better battery optimization.</li>
+    <li><span class="label">On‑device ML:</span> More inference at the edge for privacy and low‑latency use cases.</li>
+  </ul>
+
+  <h2>8. Conclusion</h2>
+  <ul>
+    <li><span class="label">Summary:</span> AIDX unifies AI guidance, wearable vitals, reminders, and community into a single, privacy‑respecting mHealth experience.</li>
+    <li><span class="label">Impact:</span> Faster triage, better adherence, clearer context for decisions, and safer escalation when needed.</li>
+  </ul>
+
+
+  <h2>11. User Personas &amp; Use Cases</h2>
+  <ul>
+    <li><span class="label">Persona A – Health‑Active Adult:</span> Uses wearables; wants fast triage for minor issues and adherence support.</li>
+    <li><span class="label">Persona B – Caregiver:</span> Monitors dependents’ vitals and medication schedules; needs clear escalation paths.</li>
+    <li><span class="label">Persona C – Volunteer Donor:</span> Seeks donation drives and responds to blood type requests; prefers in‑app DMs.</li>
+  </ul>
+  <ul>
+    <li><span class="label">Use cases:</span> report a new symptom; scan a prescription to create reminders; connect a smartwatch; receive auto‑SOS after a detected fall; find a nearby ER; share Health ID via QR.</li>
+  </ul>
+
+  <h2>12. System Diagram</h2>
+  <style>.mono{font-family: Consolas, "Courier New", monospace; font-size: 10pt;}</style>
+  <div class="mono">
+<pre>
++--------------------+          HTTPS           +------------------------+
+|    Flutter App     |------------------------->|    LLM API (Server)    |
+| Android/iOS/Web    |                         +------------------------+
+| UI + Provider      |
++----------+---------+
+           |
+           | Auth / Data / Push
+           v
++----------------------------+
+|          Firebase          |
+| Auth · Firestore · Storage |
+| FCM · Local Notifications  |
++----------------------------+
+
+           |
+           | BLE (Vitals)
+           v
++----------------------------+
+|       BLE Smartwatch       |
+| HR · SpO2 · BP · Temp · Steps |
++----------------------------+
+
+           . . . . . . . . . . . . . . . . . . . . .
+           .   Optional: OCR & Realtime (Client)   .
+           .  ML Kit OCR · WebRTC for annotations  .
+           . . . . . . . . . . . . . . . . . . . . .
+</pre>
+  </div>
+  <style>.mono{font-family: Consolas, "Courier New", monospace; font-size: 10pt;}</style>
+  <div class="mono">
+<pre>
+┌──────────────┐      HTTPS       ┌───────────────────────────┐
+│  Flutter App │ ───────────────▶ │  AI Service (Gemini API)  │
+│  (Android/iOS/Web/Desktop)      └───────────────────────────┘
+│   │      │
+│   │      └──────▶ Firebase (Auth, Firestore, Storage, FCM)
+│   │
+│   └── BLE ◀────▶ Smartwatch (HR/SpO₂/BP/Temp/Steps)
+│
+└─────────────────────────────────────────────────────────────┘
+</pre>
+  </div>
+  <ul>
+    <li><span class="label">Flow:</span> User actions → services (AI, Firebase, BLE) → provider state → UI; optional persistence to history/timeline.</li>
+    <li><span class="label">Privacy gates:</span> Explicit permissions for camera, Bluetooth, notifications, location.</li>
+  </ul>
+
+  <h2>13. Evaluation Plan</h2>
+  <ul>
+    <li><span class="label">Usability tests:</span> Task‑completion on symptom triage, reminder creation (incl. prescription scan), and SOS simulation.</li>
+    <li><span class="label">Metrics:</span> Time‑to‑guidance, adherence rate, false‑positive rate for falls/SOS, NPS for clarity of advice.</li>
+    <li><span class="label">Pilot:</span> 2–4 week pilot with weekly check‑ins; collect qualitative feedback and telemetry (opt‑in).</li>
+  </ul>
+
+  <h2>14. Accessibility &amp; Inclusion</h2>
+  <ul>
+    <li><span class="label">Readability:</span> Large fonts, high‑contrast themes, consistent iconography.</li>
+    <li><span class="label">Voice &amp; language:</span> Support for TTS; plan for localization of key screens and alerts.</li>
+    <li><span class="label">Network &amp; devices:</span> Works on low‑end phones; offline‑tolerant where feasible (local reminders).</li>
+  </ul>
+
+  <h2>15. Ethics &amp; Safety</h2>
+  <ul>
+    <li><span class="label">Scope:</span> AI is informational—not diagnostic; encourages clinician follow‑up for uncertainty or red flags.</li>
+    <li><span class="label">Auto‑SOS:</span> Clear countdown and cancel affordance; thresholds documented; logs for review.</li>
+    <li><span class="label">Data:</span> Minimal necessary collection; user‑controlled sharing (e.g., Health ID, location).</li>
+  </ul>
+
+  <h2>16. Deployment &amp; Operations</h2>
+  <ul>
+    <li><span class="label">Environments:</span> Dev/staging/prod Firebase projects; secret management via runtime config.</li>
+    <li><span class="label">Monitoring:</span> Crash/error logging, push delivery stats, BLE connection health.</li>
+    <li><span class="label">Releases:</span> CI to build artifacts; staged rollouts; change‑logs and rollback plan.</li>
+  </ul>
+
+  <h2>17. References &amp; Acknowledgments</h2>
+  <ul>
+    <li>Flutter SDK · Firebase (Auth/Firestore/Storage/Messaging)</li>
+    <li>Google ML Kit Text Recognition · Flutter WebRTC · Flutter Blue Plus</li>
+    <li>Syncfusion Flutter Charts · Provider · Shared Preferences</li>
+  </ul>
+
+
+</body>
+</html>

@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AIDX – Hackathon Overview Report</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    @page { margin: 1in; }
+    body { font-family: "Times New Roman", Times, serif; color: #111; line-height: 1.5; font-size: 12pt; }
+    h1, h2, h3 { font-family: "Times New Roman", Times, serif; color: #111; margin: 0.8em 0 0.4em; }
+    h1 { font-size: 22pt; text-align: center; }
+    h2 { font-size: 16pt; border-bottom: 1px solid #444; padding-bottom: 4px; }
+    h3 { font-size: 13.5pt; }
+    p { margin: 0.4em 0; }
+    ul { margin: 0.3em 0 0.6em 1.2em; }
+    li { margin: 0.2em 0; }
+    .title-page { text-align: center; margin-top: 15vh; }
+    .subtitle { font-size: 12pt; color: #333; margin-top: 0.5em; }
+    .meta { margin-top: 2em; color: #555; }
+    .toc { border: 1px solid #bbb; padding: 12px; background: #fafafa; }
+    .small { font-size: 10pt; color: #444; }
+    .code { font-family: Consolas, "Courier New", monospace; font-size: 10pt; color: #1a3; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .callout { background: #f6f8fa; border-left: 3px solid #888; padding: 10px 12px; margin: 8px 0; }
+    .kpi { border: 1px solid #ddd; padding: 8px 10px; }
+    .break { page-break-before: always; }
+  </style>
+</head>
+<body>
+  <div class="title-page">
+    <h1>AIDX – AI‑Assisted Cross‑Platform mHealth</h1>
+    <div class="subtitle">Hackathon Overview Report</div>
+    <div class="meta">Platforms: Android, iOS, Web, Desktop · Tech: Flutter, Firebase, BLE, WebRTC, ML Kit, Gemini</div>
+    <div class="meta small">Repository entrypoint: <span class="code">lib/main.dart</span> · Dashboard: <span class="code">lib/screens/dashboard_screen.dart</span></div>
+  </div>
+
+  <div class="break"></div>
+
+  <h2>1. Executive Summary</h2>
+  <p>AIDX is a cross‑platform mobile health (mHealth) application that empowers users with real‑time wearable vitals, AI‑assisted symptom and report analysis, medication reminders, emergency SOS, and community features. Built with Flutter and Firebase, the app aggregates user data, BLE smartwatch signals, and generative AI insights to deliver concise, actionable health guidance.</p>
+
+  <h2>2. Problem Statement</h2>
+  <p>Consumers lack unified tools to interpret wearable vitals, track adherence, and obtain rapid, responsible medical guidance. Fragmented apps and generic chatbots either lack clinical context or fail to integrate device signals and history.</p>
+
+  <h2>3. Solution Overview</h2>
+  <ul>
+    <li><strong>Unified Health Hub</strong>: Dashboard aggregates vitals, AI quick actions, reminders, inbox, news, tips.</li>
+    <li><strong>AI Symptom & Report Analysis</strong>: Concise, medically scoped guidance with JSON‑structured outputs.</li>
+    <li><strong>Wearable Integration</strong>: BLE connection to Android smartwatches for HR, SpO2, BP, temp, fitness.</li>
+    <li><strong>Reliability</strong>: Local + push notifications, background service hooks, and offline‑tolerant flows.</li>
+    <li><strong>Security</strong>: Firebase Auth + Firestore rules; privacy‑centric design and secrets hygiene.</li>
+  </ul>
+
+  <h2>4. Key Features</h2>
+  <h3>4.1 Dashboard</h3>
+  <ul>
+    <li>Animated header with quick vitals preview and mood capture.</li>
+    <li>Wearable connection status and shortcut to detailed <em>Vitals</em>.</li>
+    <li>Quick Actions grid (14 tiles) for AI, reminders, timeline, SOS, ID, habits, community, and more.</li>
+    <li>Rotating health news and compact health tips.</li>
+  </ul>
+  <div class="small">Refs: <span class="code">lib/screens/dashboard_screen.dart</span>, <span class="code">lib/utils/constants.dart</span></div>
+
+  <h3>4.2 AI Symptom Analysis</h3>
+  <ul>
+    <li><strong>Tabs</strong>: Analyzer (text/image), Report Analyzer (ECG, etc.), History.</li>
+    <li><strong>Context</strong>: Optional Health ID demographics and latest vitals included in prompts.</li>
+    <li><strong>Robust API</strong>: Retries, safety fallbacks, JSON validation, user‑friendly errors.</li>
+    <li><strong>History</strong>: Save and revisit analyses (Firestore).</li>
+  </ul>
+  <div class="small">Refs: <span class="code">lib/screens/ai_symptom_screen.dart</span>, <span class="code">lib/services/gemini_service.dart</span></div>
+
+  <h3>4.3 Wearable & Vitals</h3>
+  <ul>
+    <li>BLE smartwatch scanning, pairing, auto‑reconnect, keep‑alive pings.</li>
+    <li>Subscriptions for Heart Rate, SpO2, BP, Battery, Thermometer, Fitness.</li>
+    <li>Live vitals via platform channel notifier.</li>
+  </ul>
+  <div class="small">Refs: <span class="code">lib/services/android_wearable_service.dart</span>, <span class="code">lib/services/wear_os_channel.dart</span>, <span class="code">lib/screens/vitals_screen.dart</span></div>
+
+  <h3>4.4 Medication & Reminders</h3>
+  <ul>
+    <li>Medication model, reminder scheduling, adherence review dialog.</li>
+    <li>Local notifications and persistence.</li>
+  </ul>
+  <div class="small">Refs: <span class="code">lib/models/medication_model.dart</span>, <span class="code">lib/screens/reminder_screen.dart</span>, <span class="code">lib/widgets/medication_review_dialog.dart</span></div>
+
+  <h3>4.5 SOS, Health ID, Community, News</h3>
+  <ul>
+    <li><strong>SOS</strong>: One‑tap emergency with abnormal vitals logic hooks.</li>
+    <li><strong>Health ID</strong>: Shareable profile + QR.</li>
+    <li><strong>Community</strong>: Support threads, inbox.</li>
+    <li><strong>News</strong>: Curated health news with detail view.</li>
+  </ul>
+  <div class="small">Refs: <span class="code">lib/screens/sos_screen.dart</span>, <span class="code">lib/screens/health_id_screen.dart</span>, <span class="code">lib/screens/community_support_screen.dart</span>, <span class="code">lib/services/news_service.dart</span></div>
+
+  
+  <h3>4.6 Features in Dashboard Order</h3>
+  <p>The following list mirrors the dashboard tiles exactly (left-to-right, top-to-bottom) and explains what each feature does and how it works under the hood.</p>
+
+  <h3>4.6.1 AI Symptoms Analysis</h3>
+  <ul>
+    <li><strong>What it does</strong>: Collects symptoms (text + optional image), triages severity, and returns concise guidance.</li>
+    <li><strong>How it works</strong>: Uses <span class="code">GeminiService</span> to send structured prompts. Optionally enriches prompts with age/gender from Health ID and latest vitals. Parses JSON-like outputs; saves history in Firestore for signed-in users.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/ai_symptom_screen.dart</span>, <span class="code">lib/services/gemini_service.dart</span></li>
+  </ul>
+
+  <h3>4.6.2 AI Voice Chat</h3>
+  <ul>
+    <li><strong>What it does</strong>: Medical-only conversational assistant for quick Q&A.</li>
+    <li><strong>How it works</strong>: Streams user messages to <span class="code">GeminiService.sendMessage</span> with medical scope instructions; enforces concise replies and robust error handling.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/services/gemini_service.dart</span>, <span class="code">lib/screens/chat_screen.dart</span></li>
+  </ul>
+
+  <h3>4.6.3 Drug Info</h3>
+  <ul>
+    <li><strong>What it does</strong>: Lookup for medications (uses/precautions/side‑effects) and quick references.</li>
+    <li><strong>How it works</strong>: Accepts drug name queries; renders concise facts. Backend provider can be a curated dataset or external API when configured; caches recent lookups.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/drug_screen.dart</span></li>
+  </ul>
+
+  <h3>4.6.4 Hospital Finder</h3>
+  <ul>
+    <li><strong>What it does</strong>: Finds nearby hospitals/ERs with distance and contact details.</li>
+    <li><strong>How it works</strong>: Uses device location (permission‑gated) and a places provider (<span class="code">free_places_service.dart</span> or <span class="code">places_service.dart</span>) to fetch and list facilities; supports deep‑linking to maps/phone.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/hospital_screen.dart</span>, <span class="code">lib/services/places_service.dart</span>, <span class="code">lib/services/free_places_service.dart</span></li>
+  </ul>
+
+  <h3>4.6.5 Doctor & Pharmacy</h3>
+  <ul>
+    <li><strong>What it does</strong>: Surfaces nearby doctors/clinics and pharmacies.</li>
+    <li><strong>How it works</strong>: Similar to Hospital Finder, filters for professional services and pharmacies; supports calls and navigation.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/professionals_pharmacy_screen.dart</span>, <span class="code">lib/services/places_service.dart</span></li>
+  </ul>
+
+  <h3>4.6.6 Blood Donation</h3>
+  <ul>
+    <li><strong>What it does</strong>: Provides donation eligibility info and connects users to nearby donation centers/campaigns.</li>
+    <li><strong>How it works</strong>: Uses static guidance and (optionally) places search for donation points; supports share/contact actions.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/blood_donation_screen.dart</span></li>
+  </ul>
+
+  <h3>4.6.7 Medication Reminder</h3>
+  <ul>
+    <li><strong>What it does</strong>: Schedules medication reminders and tracks adherence.</li>
+    <li><strong>How it works</strong>: Creates reminder entries and uses <span class="code">flutter_local_notifications</span> for alarms; optional save to Firestore; review dialog to confirm intake.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/reminder_screen.dart</span>, <span class="code">lib/widgets/medication_review_dialog.dart</span></li>
+  </ul>
+
+  <h3>4.6.8 Medical Timeline</h3>
+  <ul>
+    <li><strong>What it does</strong>: Chronological view of health events (vitals, reminders, notes, analyses).</li>
+    <li><strong>How it works</strong>: Aggregates entries from Firestore and local state; renders in a timeline component with filters.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/timeline_screen.dart</span></li>
+  </ul>
+
+  <h3>4.6.9 Wearable Tracker</h3>
+  <ul>
+    <li><strong>What it does</strong>: Pairs with Android smartwatches and streams vitals (HR, SpO2, BP, temp, steps).</li>
+    <li><strong>How it works</strong>: Scans and connects via BLE (<span class="code">flutter_blue_plus</span>), subscribes to standard GATT characteristics, auto‑reconnects, and persists last device; updates UI and optionally stores snapshots.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/services/android_wearable_service.dart</span>, <span class="code">lib/screens/vitals_screen.dart</span></li>
+  </ul>
+
+  <h3>4.6.10 Emergency SOS</h3>
+  <ul>
+    <li><strong>What it does</strong>: One‑tap emergency with auto‑trigger if vitals are abnormal for a sustained period.</li>
+    <li><strong>How it works</strong>: Checks thresholds (e.g., HR &gt; <span class="code">180</span>, SpO2 &lt; <span class="code">85%</span>) over 30s; can initiate call/message to configured contacts or services; integrates with background service for monitoring.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/sos_screen.dart</span>, <span class="code">lib/services/background_service.dart</span>, <span class="code">lib/utils/constants.dart</span></li>
+  </ul>
+
+  <h3>4.6.11 Health ID</h3>
+  <ul>
+    <li><strong>What it does</strong>: Compact shareable health profile with QR code for quick access.</li>
+    <li><strong>How it works</strong>: Loads/edits demographics and key medical info; generates QR (<span class="code">qr_flutter</span>) for emergency or clinician use; optional link to AI analysis context.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/health_id_screen.dart</span>, <span class="code">lib/services/health_id_service.dart</span></li>
+  </ul>
+
+  <h3>4.6.12 Health Habits</h3>
+  <ul>
+    <li><strong>What it does</strong>: Tracks daily habits (sleep, hydration, activity) and awards badges.</li>
+    <li><strong>How it works</strong>: Stores habit entries in Firestore; computes streaks and summaries; integrates with notifications for nudges.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/health_habits_screen.dart</span>, <span class="code">lib/services/health_habit_service.dart</span></li>
+  </ul>
+
+  <h3>4.6.13 Sleep &amp; Fall Detect</h3>
+  <ul>
+    <li><strong>What it does</strong>: Detects sleep patterns and fall events using device sensors and (optionally) wearables.</li>
+    <li><strong>How it works</strong>: Reads accelerometer/gyroscope streams via <span class="code">sensors_plus</span> and wearable vitals; triggers alerts and logs events.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/sleep_fall_detection_screen.dart</span>, <span class="code">lib/services/sleep_fall_detection_service.dart</span></li>
+  </ul>
+
+  <h3>4.6.14 Community Support</h3>
+  <ul>
+    <li><strong>What it does</strong>: Peer support posts and threads; safe space for sharing.</li>
+    <li><strong>How it works</strong>: Firestore‑backed posts/comments with basic moderation hooks; integrates with inbox notifications.</li>
+    <li><strong>Key files</strong>: <span class="code">lib/screens/community_support_screen.dart</span></li>
+  </ul>
+  <h2>5. Architecture</h2>
+  <h3>5.1 High‑Level Components</h3>
+  <ul>
+    <li><strong>UI Layer</strong>: Flutter screens, widgets, providers.</li>
+    <li><strong>Services</strong>: Firebase, Wearable BLE, AI (Gemini), WebRTC, Notifications, Background.</li>
+    <li><strong>Data</strong>: Firestore collections (users, health_data, medications, symptoms, reminders, reports, etc.).</li>
+  </ul>
+  <div class="callout small">
+    Code map: <span class="code">lib/screens/*</span> (UI), <span class="code">lib/services/*</span> (integrations), <span class="code">lib/models/*</span> (data), <span class="code">lib/providers/*</span> (state), <span class="code">lib/utils/*</span> (helpers), <span class="code">lib/widgets/*</span> (UI components).
+  </div>
+
+  <h3>5.2 Data Flow</h3>
+  <ul>
+    <li>Auth → create/get user profile → personalized dashboard.</li>
+    <li>Wearable → BLE subscription → parsed vitals → provider state → UI + optional save to Firestore.</li>
+    <li>AI analyzer → HTTP request (Gemini) → concise results → JSON parse → display → save history.</li>
+    <li>Reminders → local notifications; optional cloud sync.</li>
+  </ul>
+
+  <h3>5.3 Notifications & Background</h3>
+  <ul>
+    <li>FCM + local notifications initialized at startup.</li>
+    <li>Background service (Android) hooks for long‑running monitoring and triggers.</li>
+  </ul>
+  <div class="small">Refs: <span class="code">lib/main.dart</span>, <span class="code">lib/services/notification_service.dart</span>, <span class="code">lib/services/background_service.dart</span></div>
+
+  <h2>6. AI & ML Details</h2>
+  <ul>
+    <li><strong>GeminiService</strong>: conversational chat, symptom JSON output, report analysis, retries, timeouts, safety handling.</li>
+    <li><strong>Prompting</strong>: medical‑only scope, brevity, and field gating (age/gender/intensity/duration/image).</li>
+    <li><strong>OCR</strong>: Google ML Kit for text recognition on prescriptions/reports.</li>
+    <li><strong>WebRTC</strong>: AI video call scaffolding with analysis data channel (signaling backend required).</li>
+  </ul>
+  <div class="small">Refs: <span class="code">lib/services/gemini_service.dart</span>, <span class="code">pubspec.yaml</span>, <span class="code">lib/services/ai_webrtc_service.dart</span></div>
+
+  <h2>7. Wearables Integration</h2>
+  <ul>
+    <li>Service discovery and subscriptions for HR (0x180D), SpO2 (0x1822), BP (0x1810), Battery (0x180F), Thermometer (0x1809).</li>
+    <li>Auto‑reconnect, keep‑alive pings, periodic sensor activation, persisted last device.</li>
+    <li>Platform channel for live vitals to UI.</li>
+  </ul>
+  <div class="small">Refs: <span class="code">lib/services/android_wearable_service.dart</span>, <span class="code">lib/services/wear_os_channel.dart</span></div>
+
+  <h2>8. Security, Privacy, and Compliance</h2>
+  <ul>
+    <li>Firebase Auth + Firestore rules (see <span class="code">firestore.rules</span>, <span class="code">storage.rules</span>).</li>
+    <li>PII minimization, user consent for permissions (camera, Bluetooth, notifications, background).</li>
+    <li><strong>Secrets</strong>: Use runtime config (e.g., <span class="code">--dart-define</span>) or secure storage. Avoid hardcoding API keys.</li>
+  </ul>
+
+  <h2>9. Setup & Run</h2>
+  <ol>
+    <li>Install Flutter SDK; configure Android/iOS toolchains.</li>
+    <li>Set Firebase project; ensure <span class="code">lib/firebase_options.dart</span> matches your project and platform configs.</li>
+    <li>Install dependencies: <span class="code">flutter pub get</span></li>
+    <li>Run on target: <span class="code">flutter run -d android</span> or <span class="code">-d chrome</span></li>
+  </ol>
+  <div class="callout small">Note: Align dependencies with features used (BLE/WebRTC/SQLite) in <span class="code">pubspec.yaml</span>.</div>
+
+  <h2>10. Impact & Evaluation</h2>
+  <div class="grid">
+    <div class="kpi">
+      <strong>Time to Guidance</strong>
+      <p>Concise AI responses; symptom triage with minimal inputs.</p>
+    </div>
+    <div class="kpi">
+      <strong>Continuity</strong>
+      <p>History of analyses and vitals trends foster better follow‑up.</p>
+    </div>
+    <div class="kpi">
+      <strong>Reliability</strong>
+      <p>Notifications and background tasks reduce missed reminders.</p>
+    </div>
+    <div class="kpi">
+      <strong>Extensibility</strong>
+      <p>Modular services allow fast feature iteration.</p>
+    </div>
+  </div>
+
+  <h2>11. Roadmap</h2>
+  <ul>
+    <li>Finalize BLE device matrices and proprietary characteristics.</li>
+    <li>Production WebRTC signaling + AI annotations pipeline.</li>
+    <li>Deeper medication intelligence (interactions, side effects).</li>
+    <li>Improved on‑device inference and edge privacy.</li>
+  </ul>
+
+  <h2>12. Risks & Mitigations</h2>
+  <ul>
+    <li><strong>API/Model Availability</strong>: backoff + user messaging; multi‑provider abstraction.</li>
+    <li><strong>Device Diversity</strong>: standard GATT coverage + fallbacks; user diagnostics.</li>
+    <li><strong>Privacy</strong>: minimum necessary data, opt‑in, secure storage, rules audits.</li>
+  </ul>
+
+  <h2>13. Appendix – Code Map</h2>
+  <ul>
+    <li>Entrypoints: <span class="code">lib/main.dart</span>, mobile variant <span class="code">lib/main_mobile.dart</span></li>
+    <li>Dashboard: <span class="code">lib/screens/dashboard_screen.dart</span></li>
+    <li>AI: <span class="code">lib/services/gemini_service.dart</span>, <span class="code">lib/screens/ai_symptom_screen.dart</span></li>
+    <li>Wearables: <span class="code">lib/services/android_wearable_service.dart</span>, <span class="code">lib/services/wear_os_channel.dart</span></li>
+    <li>Firebase: <span class="code">lib/services/firebase_service.dart</span>, <span class="code">lib/services/database_init.dart</span></li>
+    <li>Notifications: <span class="code">lib/services/notification_service.dart</span></li>
+    <li>UI Components: <span class="code">lib/widgets/*</span>, theme <span class="code">lib/utils/theme.dart</span></li>
+  </ul>
+
+  <p class="small">To export as PDF: open this HTML in a browser and use Print → Save as PDF. Font is set to Times New Roman; page margins are configured for A4/Letter.</p>
+</body>
+</html>
+

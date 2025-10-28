@@ -1166,7 +1166,7 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
 
   Widget _buildReportSummaryContent(String summaryText) {
     return Text(
-      summaryText.isEmpty ? "Report analysis completed successfully" : summaryText,
+      summaryText.isEmpty ? "Report analysis completed successfully" : _brief(summaryText, sentences: 2, maxChars: 220),
       style: const TextStyle(
         color: Colors.white,
         fontSize: 14,
@@ -1177,20 +1177,23 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
   }
 
   Widget _buildReportFindingsContent(String findingsText) {
-    return Text(
-      findingsText.isEmpty ? "No significant abnormalities detected" : findingsText,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 14,
-        fontFamily: 'Montserrat',
-        height: 1.4,
-      ),
-    );
+    if (findingsText.trim().isEmpty) {
+      return const Text(
+        "No significant abnormalities detected",
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 14,
+          fontFamily: 'Montserrat',
+          height: 1.4,
+        ),
+      );
+    }
+    return _buildColoredFindingsList(findingsText);
   }
 
   Widget _buildReportRecommendationsContent(String recommendationsText) {
     return Text(
-      recommendationsText.isEmpty ? "Continue regular monitoring as advised by your healthcare provider" : recommendationsText,
+      recommendationsText.isEmpty ? "Continue regular monitoring as advised by your healthcare provider" : _brief(recommendationsText, sentences: 3, maxChars: 240),
       style: const TextStyle(
         color: Colors.white,
         fontSize: 14,
@@ -1202,7 +1205,7 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
 
   Widget _buildReportNextStepsContent(String nextStepsText) {
     return Text(
-      nextStepsText.isEmpty ? "Follow up with your doctor for any concerns" : nextStepsText,
+      nextStepsText.isEmpty ? "Follow up with your doctor for any concerns" : _brief(nextStepsText, sentences: 3, maxChars: 240),
       style: const TextStyle(
         color: Colors.white,
         fontSize: 14,
@@ -1711,7 +1714,7 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
 
   Widget _buildHomeRemedyContent(String remedyText) {
     return Text(
-      remedyText.isEmpty ? "Rest, hydrate, cool compress for fever" : remedyText,
+      remedyText.isEmpty ? "Rest, hydrate, cool compress for fever" : _brief(remedyText, sentences: 3, maxChars: 200),
       style: const TextStyle(
         color: Colors.white,
         fontSize: 14,
@@ -1723,7 +1726,7 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
 
   Widget _buildMeasuresContent(String measuresText) {
     return Text(
-      measuresText.isEmpty ? "Monitor symptoms, seek care if worsens" : measuresText,
+      measuresText.isEmpty ? "Monitor symptoms, seek care if worsens" : _brief(measuresText, sentences: 3, maxChars: 200),
       style: const TextStyle(
         color: Colors.white,
         fontSize: 14,
@@ -1731,6 +1734,120 @@ class _AISymptomScreenState extends State<AISymptomScreen> {
         height: 1.4,
       ),
     );
+  }
+
+  String _brief(String text, {int sentences = 3, int maxChars = 260}) {
+    String t = text.trim();
+    final parts = _splitIntoSentences(t);
+    String clipped = parts.take(sentences).join(' ').trim();
+    if (clipped.length > maxChars) {
+      clipped = clipped.substring(0, maxChars).trimRight();
+      final lastBreak = clipped.lastIndexOf(RegExp(r'[\.\!\?]\s|\s'));
+      if (lastBreak > 40) {
+        clipped = clipped.substring(0, lastBreak).trimRight();
+      }
+      clipped += '…';
+    }
+    return clipped;
+  }
+
+  List<String> _splitIntoSentences(String text) {
+    final clean = text.replaceAll('\n', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    final matches = RegExp(r'[^.!?]+[.!?]?').allMatches(clean);
+    final sentences = matches.map((m) => m.group(0)!.trim()).where((s) => s.isNotEmpty).toList();
+    return sentences.isEmpty ? [clean] : sentences;
+  }
+
+  // ===== Key Findings formatting (no raw '*', color-coded) =====
+  Widget _buildColoredFindingsList(String text) {
+    final items = _extractFindingItems(text);
+    // Limit to first 6 to keep brief
+    final limited = items.take(6).toList();
+    if (limited.isEmpty) {
+      return Text(
+        _brief(text, sentences: 3, maxChars: 260),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 14,
+          fontFamily: 'Montserrat',
+          height: 1.4,
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: limited.map((line) {
+        final color = _findingColor(line.toLowerCase());
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                margin: const EdgeInsets.only(top: 6, right: 8),
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  line,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontFamily: 'Montserrat',
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  List<String> _extractFindingItems(String text) {
+    // Normalize bullets and split into list items
+    String t = text.replaceAll('\r', '\n');
+    // Replace common bullet markers with newlines to split
+    t = t.replaceAll('•', '\n').replaceAll('*', '\n').replaceAll('- ', '\n- ');
+    // Split by lines and also by numbering patterns
+    final rawLines = t.split('\n')
+        .expand((line) => line.split(RegExp(r'\d+\)\s|\d+\.\s'))) // split numbered lists
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final List<String> items = [];
+    for (final l in rawLines) {
+      var s = l;
+      // Strip leading bullet/number characters
+      s = s.replaceFirst(RegExp(r'^(\*|\-|•|\d+\.|\d+\))\s*'), '');
+      // Remove trailing punctuation duplication
+      s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (s.isNotEmpty) items.add(s);
+    }
+    // If we ended up with a single long paragraph, try sentence split as fallback
+    if (items.length <= 1) {
+      final sentences = _splitIntoSentences(text);
+      return sentences.map((s) => s.replaceFirst(RegExp(r'^(\*|\-|•)\s*'), '').trim()).where((s) => s.isNotEmpty).toList();
+    }
+    return items;
+  }
+
+  Color _findingColor(String lower) {
+    // Simple heuristic color mapping
+    const normalKeys = ['normal', 'within normal', 'unremarkable', 'no acute', 'negative', 'benign'];
+    const cautionKeys = ['mild', 'borderline', 'slightly', 'suggest', 'recommend', 'consider'];
+    const alertKeys = ['fracture', 'mass', 'lesion', 'abnormal', 'infarct', 'effusion', 'consolidation', 'positive', 'severe'];
+
+    if (alertKeys.any((k) => lower.contains(k))) return Colors.orangeAccent;
+    if (cautionKeys.any((k) => lower.contains(k))) return Colors.yellowAccent;
+    if (normalKeys.any((k) => lower.contains(k))) return Colors.greenAccent;
+    return Colors.cyanAccent; // default neutral
   }
 
 

@@ -702,15 +702,10 @@ ANALYZE: Provide brief diagnosis and treatment. Keep response short.""";
     final systemPrompt = brief
         ? '''You are a professional pharmacist. For "$drugName":
 
-IMPORTANT: If "$drugName" is NOT a medical drug/medication (e.g., food, objects, entertainment), respond with:
-Name: [drugName]
-Generic: Not a medication
-Uses: This appears to be non-medical content
-Dosage: N/A
-Warnings: Please enter a valid medication or drug name
+IMPORTANT: Only respond with "Not a medication" if the input is clearly non-medical (like "pizza", "car", "movie"). For any drug name, medication, supplement, or chemical compound, provide medical information.
 
-For MEDICAL drugs, return ONLY these fields:
-Name: [brand or trade name(s), comma-separated if multiple]
+For MEDICAL drugs/medications/supplements, return ONLY these fields:
+Name: [COMMERCIAL/BRAND names first, then generic if different. Examples: "Napa (Paracetamol)", "Aspirin (Acetylsalicylic acid)", "Panadol (Paracetamol)"]
 Generic: [generic/chemical name]
 Uses: [very short, e.g. "pain relief, fever"]
 Dosage: [short, e.g. "500mg every 6h"]
@@ -718,16 +713,9 @@ Warnings: [short, e.g. "liver disease, overdose risk"]
 Be concise.'''
         : '''You are a professional pharmacist. For "$drugName":
 
-IMPORTANT: If "$drugName" is NOT a medical drug/medication, respond with:
-Generic Formula: Not a medication
-Uses: This appears to be non-medical content
-Classification: N/A
-Form: N/A
-Dosage: N/A
-Side Effects: Please enter a valid medication or drug name
-Warnings: N/A
+IMPORTANT: Only respond with "Not a medication" if the input is clearly non-medical (like "pizza", "car", "movie"). For any drug name, medication, supplement, or chemical compound, provide medical information.
 
-For MEDICAL drugs, return ONLY these categories:
+For MEDICAL drugs/medications/supplements, return ONLY these categories:
 Generic Formula: [generic name]
 Uses: [primary medical uses]
 Classification: [pharmacological class]
@@ -825,10 +813,30 @@ Warnings: [important warnings]''';
     String uses = '';
     String dosage = '';
     String warnings = '';
+    
+    // Check if the response indicates it's not a medication
+    final fullText = text.toLowerCase();
+    if (fullText.contains('not a medication') || fullText.contains('non-medical content')) {
+      return {
+        'name': drugName,
+        'generic_formula': 'Not a medication',
+        'uses': 'This appears to be non-medical content',
+        'dosage': 'N/A',
+        'warnings': 'Please enter a valid medication or drug name',
+      };
+    }
+    
     for (final line in lines) {
       if (line.toLowerCase().startsWith('name:')) {
         name = line.substring(5).trim();
-        // If multiple brand names, keep as comma-separated string
+        // Clean up the name to show commercial names prominently
+        if (name.contains('(') && name.contains(')')) {
+          // Extract commercial name from format like "Napa (Paracetamol)"
+          final parts = name.split('(');
+          if (parts.length > 1) {
+            name = parts[0].trim(); // Keep the commercial name
+          }
+        }
       } else if (line.toLowerCase().startsWith('generic:')) {
         generic = line.substring(8).trim();
       } else if (line.toLowerCase().startsWith('uses:')) {

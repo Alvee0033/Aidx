@@ -24,6 +24,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
   bool _isOffline = false;
   String _selectedMood = '';
   final TextEditingController _moodNoteController = TextEditingController();
+  bool _isDisposed = false;
   
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -37,6 +38,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
   @override
   void dispose() {
     _moodNoteController.dispose();
+    _isDisposed = true;
     super.dispose();
   }
 
@@ -195,16 +197,19 @@ class _TimelineScreenState extends State<TimelineScreen> {
 
   Future<void> _loadTimelineEvents() async {
     print('🔄 Starting timeline load...');
+    if (!mounted) return;
     setState(() => _isLoading = true);
     
     try {
       final user = _auth.currentUser;
       if (user == null) {
         print('❌ No user logged in');
+        if (!mounted) return;
         setState(() {
           _timelineEvents = [];
           _isLoading = false;
         });
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Please log in to view timeline'),
@@ -239,72 +244,73 @@ class _TimelineScreenState extends State<TimelineScreen> {
         {'name': 'motion_monitoring', 'query': _firestore.collection('motion_monitoring').where('userId', isEqualTo: uid).limit(200)},
       ];
 
-      // Comprehensive event collection
+      // Collector for events
       final List<Map<String, dynamic>> events = [];
 
-      // Detailed query execution with comprehensive logging and fallback handling
-      for (var collection in collectionsToQuery) {
-        try {
-          final querySnapshot = await (collection['query'] as Query).get();
-          print('📊 Collection: ${collection['name']} - Found ${querySnapshot.docs.length} documents');
-
-          for (var doc in querySnapshot.docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            
-            // Enhanced event creation with more robust type detection
-            Map<String, dynamic>? event = _createEventFromData(
-              collection['name'] as String, 
-              doc.id, 
-              data
-            );
-            
-            if (event != null) {
-              events.add(event);
-              print('✅ Added event from ${collection['name']}: ${event['title']}');
+      // 1) PRIORITY: Load symptoms first so they show quickly
+      Future<void> loadPriority() async {
+        final priority = collectionsToQuery.where((c) => c['name'] == 'symptoms' || c['name'] == 'symptomRecords');
+        for (var collection in priority) {
+          try {
+            final snap = await ((collection['query'] as Query).limit(50)).get().timeout(const Duration(seconds: 6));
+            print('📊 Priority collection ${collection['name']}: ${snap.docs.length} docs');
+            for (var doc in snap.docs) {
+              final data = doc.data() as Map<String, dynamic>;
+              final event = _createEventFromData(collection['name'] as String, doc.id, data);
+              if (event != null) events.add(event);
             }
-          }
-        } catch (e) {
-          print('❌ Error querying ${collection['name']}: $e');
-          
-          // Special handling for health_habits collection with fallback
-          if (collection['name'] == 'health_habits') {
-            try {
-              print('🔄 Trying fallback query for health_habits...');
-              final fallbackQuery = _firestore
-                  .collection('health_habits')
-                  .where('userId', isEqualTo: uid)
-                  .limit(100);
-              
-              final fallbackSnapshot = await fallbackQuery.get();
-              print('📊 Fallback health_habits query: Found ${fallbackSnapshot.docs.length} documents');
-              
-              for (var doc in fallbackSnapshot.docs) {
-                final data = doc.data() as Map<String, dynamic>;
-                Map<String, dynamic>? event = _createEventFromData('health_habits', doc.id, data);
-                if (event != null) {
-                  events.add(event);
-                  print('✅ Added fallback event from health_habits: ${event['title']}');
-                }
-              }
-            } catch (fallbackError) {
-              print('❌ Fallback query for health_habits also failed: $fallbackError');
-            }
+          } catch (e) {
+            print('❌ Priority load failed for ${collection['name']}: $e');
           }
         }
       }
 
-      // Sort events by timestamp
-      events.sort((a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime));
+      // 2) BACKGROUND: Load other collections without blocking UI
+      Future<void> loadBackground() async {
+        final others = collectionsToQuery.where((c) => c['name'] != 'symptoms' && c['name'] != 'symptomRecords');
+        for (var collection in others) {
+          try {
+            final snap = await (collection['query'] as Query).get().timeout(const Duration(seconds: 8));
+            print('📊 Collection: ${collection['name']} - Found ${snap.docs.length} documents');
+            final List<Map<String, dynamic>> newEvents = [];
+            for (var doc in snap.docs) {
+              final data = doc.data() as Map<String, dynamic>;
+              final event = _createEventFromData(collection['name'] as String, doc.id, data);
+              if (event != null) newEvents.add(event);
+            }
+            // Merge into events and update UI incrementally
+            if (!_isDisposed && mounted && newEvents.isNotEmpty) {
+              newEvents.sort((a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime));
+              setState(() {
+                _timelineEvents = [..._timelineEvents, ...newEvents];
+                _timelineEvents.sort((a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime));
+              });
+            }
+          } catch (e) {
+            print('❌ Error querying ${collection['name']}: $e');
+          }
+        }
+      }
 
+      // Run priority first
+      await loadPriority();
+
+      // Sort and show immediately
+      events.sort((a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime));
+      if (!_isDisposed && mounted) {
         setState(() {
           _timelineEvents = events;
           _isLoading = false;
-      });
+        });
+      }
 
-      print('🎉 Total timeline events loaded: ${events.length}');
+      // Then load the rest in the background
+      unawaited(loadBackground());
+
+      print('🎉 Initial timeline events loaded: ${events.length}');
 
       // If no events, show a helpful message
-      if (events.isEmpty) {
+      if (events.isEmpty && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('No timeline events found. Try adding some activities!'),
@@ -317,10 +323,12 @@ class _TimelineScreenState extends State<TimelineScreen> {
       }
     } catch (e) {
       print('❌ Comprehensive timeline loading error: $e');
+        if (!mounted) return;
         setState(() {
         _timelineEvents = [];
           _isLoading = false;
         });
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error loading timeline: $e'),
